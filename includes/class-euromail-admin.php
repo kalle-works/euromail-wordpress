@@ -255,11 +255,25 @@ class Euromail_Admin {
 			);
 		}
 
-		update_option( 'euromail_force_from_enabled', isset( $_POST['euromail_force_from_enabled'] ) );
-		update_option(
-			'euromail_force_from_email',
-			isset( $_POST['euromail_force_from_email'] ) ? sanitize_email( wp_unslash( $_POST['euromail_force_from_email'] ) ) : ''
-		);
+		$force_from_enabled = isset( $_POST['euromail_force_from_enabled'] );
+		$force_from_email   = isset( $_POST['euromail_force_from_email'] ) ? sanitize_email( wp_unslash( $_POST['euromail_force_from_email'] ) ) : '';
+
+		if ( $force_from_enabled && ! is_email( $force_from_email ) ) {
+			// Refuse to enable Force From with an empty/invalid address —
+			// the normalizer has its own defense against this, but the
+			// setting should never be saved in a broken state to begin with.
+			update_option( 'euromail_force_from_enabled', false );
+			add_settings_error(
+				'euromail_settings',
+				'euromail_force_from_invalid',
+				__( 'Force From was not enabled: enter a valid email address first.', 'euromail' ),
+				'error'
+			);
+		} else {
+			update_option( 'euromail_force_from_enabled', $force_from_enabled );
+			update_option( 'euromail_force_from_email', $force_from_email );
+		}
+
 		update_option(
 			'euromail_force_from_name',
 			isset( $_POST['euromail_force_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['euromail_force_from_name'] ) ) : ''
@@ -279,6 +293,11 @@ class Euromail_Admin {
 
 	/**
 	 * AJAX handler for the "Verify key" button.
+	 *
+	 * Verifies whatever key the browser posted (the field's current value,
+	 * whether saved yet or not), falling back to the saved key only when
+	 * the field was empty. The posted key is never written to the option —
+	 * this is a read-only check.
 	 */
 	public function ajax_verify_key() {
 		check_ajax_referer( 'euromail_verify_key', 'nonce' );
@@ -287,17 +306,28 @@ class Euromail_Admin {
 			wp_send_json_error( array( 'message' => __( 'You are not allowed to do this.', 'euromail' ) ), 403 );
 		}
 
-		if ( ! EUROMAIL_SDK_LOADED ) {
-			wp_send_json_error( array( 'message' => __( 'The Euromail SDK is not installed.', 'euromail' ) ) );
-		}
+		$api_key = self::resolve_verification_api_key( $_POST );
 
-		$api_key = Euromail_Settings::get( 'euromail_api_key' );
-
-		if ( '' === (string) $api_key ) {
+		if ( '' === $api_key ) {
 			wp_send_json_error( array( 'message' => __( 'No API key configured.', 'euromail' ) ) );
 		}
 
-		try {
+		/**
+		 * Filters the SDK client used to verify an API key, letting tests
+		 * inject a fake client instead of making a real network request.
+		 * Returning a non-null value here skips the plugin's own client
+		 * construction entirely.
+		 *
+		 * @param object|null $client  Default null.
+		 * @param string      $api_key The key being verified.
+		 */
+		$client = apply_filters( 'euromail_verify_key_client', null, $api_key );
+
+		if ( null === $client ) {
+			if ( ! EUROMAIL_SDK_LOADED ) {
+				wp_send_json_error( array( 'message' => __( 'The Euromail SDK is not installed.', 'euromail' ) ) );
+			}
+
 			$client = new EuroMail\Client(
 				$api_key,
 				array(
@@ -306,18 +336,39 @@ class Euromail_Admin {
 					'max_retries' => 0,
 				)
 			);
+		}
 
+		// The try/catch deliberately covers only the SDK call, not the
+		// wp_send_json_*() calls that follow: those call wp_die()
+		// internally, and in the WP AJAX test harness that throws an
+		// Exception subclass to simulate it — a catch(Exception) wrapped
+		// around them would swallow that and misreport success as failure.
+		try {
 			$account = $client->account->get();
-
-			wp_send_json_success(
-				array(
-					'message' => __( 'Connection verified.', 'euromail' ),
-					'account' => $account,
-				)
-			);
 		} catch ( Exception $e ) {
 			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+			return;
 		}
+
+		wp_send_json_success(
+			array(
+				'message' => __( 'Connection verified.', 'euromail' ),
+				'account' => $account,
+			)
+		);
+	}
+
+	/**
+	 * Resolve which API key an AJAX verification request should check:
+	 * the posted 'api_key' field when non-empty, otherwise the saved key.
+	 *
+	 * @param array $request Typically $_POST.
+	 * @return string
+	 */
+	public static function resolve_verification_api_key( array $request ) {
+		$submitted = isset( $request['api_key'] ) ? sanitize_text_field( wp_unslash( $request['api_key'] ) ) : '';
+
+		return '' !== $submitted ? $submitted : (string) Euromail_Settings::get( 'euromail_api_key' );
 	}
 
 	/**
