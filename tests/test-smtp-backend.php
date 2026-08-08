@@ -5,12 +5,11 @@
  * Guarantees under test:
  * - The canonical email is mapped correctly onto PHPMailer: from/name,
  *   to/cc/bcc/reply-to (including "Name <addr>" forms), subject, HTML vs.
- *   plain body, custom headers, and attachments (via path when the file
- *   still exists, else via base64 content).
+ *   plain body, custom headers, and attachments (from their base64 content).
  * - A successful send returns PHPMailer's own Message-ID.
- * - A PHPMailer failure is thrown back out as Euromail_Retryable_Exception
- *   or Euromail_Permanent_Exception depending on the error text, not left
- *   as a raw PHPMailer\PHPMailer\Exception.
+ * - A PHPMailer failure is thrown back out as Euromail_Smtp_Exception,
+ *   classified retryable or not from the error text, not left as a raw
+ *   PHPMailer\PHPMailer\Exception.
  *
  * @package Euromail
  */
@@ -44,32 +43,12 @@ class Euromail_Test_Non_Sending_PHPMailer extends PHPMailer {
 
 class Test_Euromail_Smtp_Backend extends WP_UnitTestCase {
 
-	/**
-	 * @var string[]
-	 */
-	private $temp_files = array();
-
 	public function tear_down() {
-		foreach ( $this->temp_files as $path ) {
-			if ( file_exists( $path ) ) {
-				unlink( $path );
-			}
-		}
-		$this->temp_files = array();
-
 		delete_option( 'euromail_smtp_host' );
 		delete_option( 'euromail_smtp_port' );
 		delete_option( 'euromail_smtp_auth' );
 
 		parent::tear_down();
-	}
-
-	private function make_temp_file( $contents ) {
-		$path = tempnam( sys_get_temp_dir(), 'euromail-smtp-backend-test-' );
-		file_put_contents( $path, $contents ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-		$this->temp_files[] = $path;
-
-		return $path;
 	}
 
 	private function base_email( array $overrides = array() ) {
@@ -190,29 +169,7 @@ class Test_Euromail_Smtp_Backend extends WP_UnitTestCase {
 		$this->assertTrue( $found, 'Custom header must be added to the PHPMailer instance.' );
 	}
 
-	public function test_attachment_is_added_from_path_when_the_file_still_exists() {
-		$path = $this->make_temp_file( 'attachment bytes' );
-
-		list( $backend, $holder ) = $this->make_backend_and_holder();
-
-		$backend->send(
-			$this->base_email(
-				array(
-					'attachments' => array(
-						array( 'filename' => 'file.txt', 'content_type' => 'text/plain', 'path' => $path, 'content' => null ),
-					),
-				)
-			),
-			'idem-key'
-		);
-
-		$attachments = $holder->mailer->getAttachments();
-		$this->assertCount( 1, $attachments );
-		$this->assertSame( 'file.txt', $attachments[0][2] );
-		$this->assertSame( $path, $attachments[0][0], 'Attachment must be read from the path directly, not re-encoded from content.' );
-	}
-
-	public function test_attachment_falls_back_to_content_when_path_is_missing() {
+	public function test_attachment_is_added_from_its_base64_content() {
 		list( $backend, $holder ) = $this->make_backend_and_holder();
 
 		$backend->send(
@@ -222,7 +179,6 @@ class Test_Euromail_Smtp_Backend extends WP_UnitTestCase {
 						array(
 							'filename'     => 'file.txt',
 							'content_type' => 'text/plain',
-							'path'         => '/does/not/exist.txt',
 							'content'      => base64_encode( 'attachment bytes' ),
 						),
 					),
@@ -245,19 +201,25 @@ class Test_Euromail_Smtp_Backend extends WP_UnitTestCase {
 		$this->assertSame( trim( $holder->mailer->getLastMessageID(), '<>' ), $result['message_id'] );
 	}
 
-	public function test_permanent_smtp_failure_is_thrown_as_permanent_exception() {
+	public function test_permanent_smtp_failure_is_thrown_as_a_non_retryable_exception() {
 		list( $backend, $holder ) = $this->make_backend_and_holder( 'SMTP Error: Could not authenticate.' );
 
-		$this->expectException( Euromail_Permanent_Exception::class );
-
-		$backend->send( $this->base_email(), 'idem-key' );
+		try {
+			$backend->send( $this->base_email(), 'idem-key' );
+			$this->fail( 'Expected a Euromail_Smtp_Exception.' );
+		} catch ( Euromail_Smtp_Exception $e ) {
+			$this->assertFalse( $e->is_retryable() );
+		}
 	}
 
-	public function test_retryable_smtp_failure_is_thrown_as_retryable_exception() {
+	public function test_retryable_smtp_failure_is_thrown_as_a_retryable_exception() {
 		list( $backend, $holder ) = $this->make_backend_and_holder( 'SMTP connect() failed. 421 Service not available' );
 
-		$this->expectException( Euromail_Retryable_Exception::class );
-
-		$backend->send( $this->base_email(), 'idem-key' );
+		try {
+			$backend->send( $this->base_email(), 'idem-key' );
+			$this->fail( 'Expected a Euromail_Smtp_Exception.' );
+		} catch ( Euromail_Smtp_Exception $e ) {
+			$this->assertTrue( $e->is_retryable() );
+		}
 	}
 }

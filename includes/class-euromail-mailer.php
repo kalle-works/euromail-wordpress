@@ -46,12 +46,13 @@ class Euromail_Mailer {
 
 		$idempotency_key = wp_generate_uuid4();
 
-		// Attachment content is never stored in the log: Euromail_Queue
-		// re-reads a retry's attachments from their source 'path' instead
-		// (see redact_payload_for_storage()) — the original request's temp
-		// files may or may not still exist by then, and a missing one is
-		// reported as a named, permanent failure rather than silently
-		// stored as a multi-megabyte blob.
+		// Stored WITH attachment content while the row is non-terminal
+		// (sending/queued): a later retry needs the actual bytes, since the
+		// original request's temp attachment files are typically gone by
+		// then. Content is stripped (or the whole payload nulled, per
+		// euromail_store_body) once the row reaches a terminal state —
+		// 'sent' or 'failed' alike, so a failure never keeps message
+		// content around that the setting promised not to store.
 		$log_id = Euromail_Logger::create(
 			array(
 				'status'          => 'sending',
@@ -59,7 +60,7 @@ class Euromail_Mailer {
 				'mail_from'       => $email['from'],
 				'mail_to'         => implode( ', ', $email['to'] ),
 				'subject'         => $email['subject'],
-				'payload'         => wp_json_encode( self::redact_payload_for_storage( $email ) ),
+				'payload'         => wp_json_encode( $email ),
 			)
 		);
 
@@ -88,19 +89,22 @@ class Euromail_Mailer {
 			$this->update_log(
 				$log_id,
 				array(
-					'status'          => 'retrying',
+					'status'          => 'queued',
 					'error'           => $result['error'],
 					'attempts'        => 1,
 					'next_attempt_at' => gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) + Euromail_Queue::BACKOFF_SECONDS[0] ), // phpcs:ignore WordPress.DateTime.CurrentTimeTimestamp.Requested
 				)
 			);
 		} else {
+			$store_body = (bool) Euromail_Settings::get( 'euromail_store_body' );
+
 			$this->update_log(
 				$log_id,
 				array(
 					'status'   => 'failed',
 					'error'    => $result['error'],
 					'attempts' => 1,
+					'payload'  => $store_body ? wp_json_encode( self::redact_payload_for_storage( $email ) ) : null,
 				)
 			);
 		}
@@ -117,7 +121,7 @@ class Euromail_Mailer {
 	 * selection and error classification.
 	 *
 	 * @param array  $email           Canonical email array.
-	 * @param string $idempotency_key Idempotency key (reused as-is across automatic retries).
+	 * @param string $idempotency_key Idempotency key (reused as-is across retries).
 	 * @return array{success: bool, backend: string|null, message_id: string|null, retryable: bool, error: string, retry_after: int|null}
 	 */
 	public function attempt_send( array $email, $idempotency_key ) {
@@ -177,16 +181,12 @@ class Euromail_Mailer {
 	 * @return bool
 	 */
 	public static function is_retryable_exception( Throwable $e ) {
-		if ( $e instanceof Euromail_Retryable_Exception ) {
-			return true;
-		}
-
-		if ( $e instanceof Euromail_Permanent_Exception ) {
-			return false;
-		}
-
 		if ( EUROMAIL_SDK_LOADED && $e instanceof EuroMail\Exceptions\EuroMailException ) {
 			return $e->isRetryable();
+		}
+
+		if ( $e instanceof Euromail_Smtp_Exception ) {
+			return $e->is_retryable();
 		}
 
 		// Unknown Throwable: default to retryable. A spurious retry costs
@@ -224,10 +224,11 @@ class Euromail_Mailer {
 
 	/**
 	 * Strip attachment content (base64) from a canonical email before it is
-	 * ever stored. Attachment bytes never touch the database, at any row
-	 * status: Euromail_Queue re-reads them from their source 'path' at
-	 * retry time instead, and a resend goes through the same path.
-	 * filename/content_type/path/size are kept.
+	 * stored for an audited terminal-state row (sent or failed alike).
+	 * Attachment bytes never linger in the database once a row's outcome is
+	 * final; filename/content_type/path/size are kept for reference, and a
+	 * resend of a row with a 'path' still on disk re-reads the bytes from
+	 * there.
 	 *
 	 * @param array $email Canonical email array.
 	 * @return array

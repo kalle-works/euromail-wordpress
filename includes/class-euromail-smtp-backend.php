@@ -47,8 +47,7 @@ class Euromail_Smtp_Backend {
 	 * @param array  $email           Canonical email array, see Euromail_Email_Normalizer::normalize().
 	 * @param string $idempotency_key Unused by SMTP (no server-side dedup); kept for interface parity with Euromail_Api_Backend.
 	 * @return array{message_id: string|null}
-	 * @throws Euromail_Retryable_Exception On a transient failure worth retrying.
-	 * @throws Euromail_Permanent_Exception On a failure retrying will not fix.
+	 * @throws Euromail_Smtp_Exception On any SMTP/transport failure, classified retryable or not.
 	 */
 	public function send( array $email, $idempotency_key ) {
 		$mail = null !== $this->mailer_factory ? call_user_func( $this->mailer_factory ) : new PHPMailer( true );
@@ -70,11 +69,7 @@ class Euromail_Smtp_Backend {
 		} catch ( PHPMailerException $e ) {
 			$message = '' !== $mail->ErrorInfo ? $mail->ErrorInfo : $e->getMessage();
 
-			if ( self::is_retryable_message( $message ) ) {
-				throw new Euromail_Retryable_Exception( $message );
-			}
-
-			throw new Euromail_Permanent_Exception( $message );
+			throw new Euromail_Smtp_Exception( $message, self::is_retryable_message( $message ) );
 		}
 
 		return array(
@@ -145,26 +140,6 @@ class Euromail_Smtp_Backend {
 		}
 
 		foreach ( $email['attachments'] as $attachment ) {
-			$this->add_attachment( $mail, $attachment );
-		}
-	}
-
-	/**
-	 * Attach a single canonical attachment, reading straight from its
-	 * source 'path' when that file still exists (avoiding an unnecessary
-	 * base64 decode/encode round-trip), falling back to the already
-	 * base64-encoded 'content' otherwise.
-	 *
-	 * @param PHPMailer $mail       PHPMailer instance.
-	 * @param array     $attachment Canonical attachment: filename, content_type, and 'path' and/or 'content'.
-	 */
-	private function add_attachment( PHPMailer $mail, array $attachment ) {
-		if ( ! empty( $attachment['path'] ) && file_exists( $attachment['path'] ) ) {
-			$mail->addAttachment( $attachment['path'], $attachment['filename'], PHPMailer::ENCODING_BASE64, $attachment['content_type'] );
-			return;
-		}
-
-		if ( ! empty( $attachment['content'] ) ) {
 			$mail->addStringAttachment(
 				base64_decode( $attachment['content'] ), // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
 				$attachment['filename'],
