@@ -1,0 +1,91 @@
+<?xml version="1.0"?>
+<ruleset name="Euromail">
+    <description>Coding standard for the Euromail WordPress plugin.</description>
+
+    <file>.</file>
+
+    <exclude-pattern>/vendor/*</exclude-pattern>
+    <exclude-pattern>/node_modules/*</exclude-pattern>
+    <exclude-pattern>/languages/*</exclude-pattern>
+    <exclude-pattern>/test-results/*</exclude-pattern>
+    <exclude-pattern>/playwright-report/*</exclude-pattern>
+    <exclude-pattern>/e2e/mock-api/*</exclude-pattern>
+
+    <arg value="sp"/>
+    <arg name="basepath" value="."/>
+    <arg name="colors"/>
+    <arg name="extensions" value="php"/>
+    <arg name="parallel" value="8"/>
+
+    <config name="minimum_supported_wp_version" value="5.7"/>
+    <config name="testVersion" value="7.4-"/>
+
+    <rule ref="WordPress-Extra">
+        <!-- Filenames follow the class-euromail-*.php WordPress convention already used throughout includes/, not file-name-matches-class-name. -->
+        <exclude name="WordPress.Files.FileName"/>
+    </rule>
+
+    <rule ref="WordPress.WP.I18n">
+        <properties>
+            <property name="text_domain" type="array">
+                <element value="euromail"/>
+            </property>
+        </properties>
+    </rule>
+
+    <!-- PHPUnit test classes are not loaded via WordPress's own class-prefix
+         convention and don't accept untrusted input, so global-prefixing and
+         nonce-verification sniffs (already satisfied for real, request-handling
+         code in includes/) don't apply to them. -->
+    <rule ref="WordPress.NamingConventions.PrefixAllGlobals">
+        <exclude-pattern>/tests/*</exclude-pattern>
+    </rule>
+    <rule ref="WordPress.Security.NonceVerification">
+        <exclude-pattern>/tests/*</exclude-pattern>
+    </rule>
+
+    <!-- class-euromail-smtp-backend.php configures WordPress core's own
+         bundled PHPMailer object property-by-property (Host, Port, Subject,
+         Body, ErrorInfo, ...) — PHPMailer's public API, not a naming choice
+         this plugin makes, so the snake_case property sniff doesn't apply.
+         test-smtp-backend.php's own fake PHPMailer stub matches the same
+         real properties for the same reason. -->
+    <rule ref="WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase">
+        <exclude-pattern>/includes/class-euromail-smtp-backend.php</exclude-pattern>
+        <exclude-pattern>/tests/test-smtp-backend.php</exclude-pattern>
+    </rule>
+
+    <!-- Small Fake_*/Mock_* helper classes (an SDK resource stub, a fake
+         client, ...) are colocated with the TestCase that uses them
+         throughout tests/ — one test concern per file, not one class per
+         file — so this sniff doesn't fit the established convention here. -->
+    <rule ref="Generic.Files.OneObjectStructurePerFile">
+        <exclude-pattern>/tests/*</exclude-pattern>
+    </rule>
+
+    <!-- Fake/stub implementations of a real interface (Euromail_Smtp_Backend,
+         a webhook lock acquirer, ...) commonly need the full signature even
+         when a given fake doesn't use every parameter, to stay swappable
+         with the real implementation. -->
+    <rule ref="Generic.CodeAnalysis.UnusedFunctionParameter">
+        <exclude-pattern>/tests/*</exclude-pattern>
+    </rule>
+
+    <!-- Test fixtures create/clean up real temp files and encode fixture
+         attachment bytes directly — not the WP_Filesystem-mediated
+         operations these sniffs exist to steer real request-handling code
+         toward. -->
+    <rule ref="WordPress.WP.AlternativeFunctions">
+        <exclude-pattern>/tests/*</exclude-pattern>
+    </rule>
+    <rule ref="WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode">
+        <exclude-pattern>/tests/*</exclude-pattern>
+    </rule>
+
+    <!-- Every ExceptionNotEscaped hit in tests/ is an exception constructor
+         argument (a fake backend/SDK client throwing to simulate a
+         failure), never real page output. -->
+    <rule ref="WordPress.Security.EscapeOutput.ExceptionNotEscaped">
+        <exclude-pattern>/tests/*</exclude-pattern>
+    </rule>
+</ruleset>

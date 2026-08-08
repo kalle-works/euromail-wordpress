@@ -34,7 +34,7 @@ class Euromail_Wp_Transport implements EuroMail\Http\TransportInterface {
 		);
 
 		if ( is_wp_error( $response ) ) {
-			throw new EuroMail\Exceptions\TransportException( $response->get_error_message() );
+			throw new EuroMail\Exceptions\TransportException( $response->get_error_message() ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- an exception message, never echoed as page output.
 		}
 
 		$headers = array();

@@ -237,7 +237,7 @@ class Test_Euromail_Webhook_Controller extends WP_UnitTestCase {
 		update_option( 'euromail_webhook_secret', 'shh' );
 		add_filter( 'euromail_webhook_sdk_loaded', '__return_false' );
 
-		$body     = $this->real_body( 'delivered', 'api-uuid-123' );
+		$body = $this->real_body( 'delivered', 'api-uuid-123' );
 		// Deliberately unsigned/garbage: if the SDK-missing check ran
 		// AFTER signature verification instead of before, this would
 		// still 401, masking the 503 this test is asserting.
@@ -253,7 +253,7 @@ class Test_Euromail_Webhook_Controller extends WP_UnitTestCase {
 		add_filter( 'euromail_webhook_sdk_loaded', '__return_true' );
 
 		$this->insert_row();
-		$body = $this->real_body( 'delivered', 'api-uuid-123' );
+		$body     = $this->real_body( 'delivered', 'api-uuid-123' );
 		$response = $this->dispatch( $body, $this->sign( $body, 'shh' ), 'delivered' );
 
 		$this->assertSame( 200, $response->get_status() );

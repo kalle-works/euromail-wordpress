@@ -169,8 +169,8 @@ class Test_Euromail_Site_Health extends WP_UnitTestCase {
 		// This is deliberately not global (no 'g'-equivalent): PHP's
 		// substr_replace-of-first-occurrence, matching JS's non-global
 		// String.prototype.replace( '_', '-' ) exactly.
-		$first_underscore  = strpos( $slug, '_' );
-		$js_computed_slug  = false !== $first_underscore
+		$first_underscore   = strpos( $slug, '_' );
+		$js_computed_slug   = false !== $first_underscore
 			? substr_replace( $slug, '-', $first_underscore, 1 )
 			: $slug;
 		$js_computed_action = 'health-check-' . $js_computed_slug;

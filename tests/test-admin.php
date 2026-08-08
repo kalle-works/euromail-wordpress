@@ -79,9 +79,9 @@ class Test_Euromail_Admin_Settings_Save extends WP_UnitTestCase {
 	private function submit_settings( array $post ) {
 		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
 
-		$_POST                              = $post;
-		$_POST['euromail_settings_submit']  = '1';
-		$_POST['euromail_settings_nonce']   = wp_create_nonce( 'euromail_settings' );
+		$_POST                             = $post;
+		$_POST['euromail_settings_submit'] = '1';
+		$_POST['euromail_settings_nonce']  = wp_create_nonce( 'euromail_settings' );
 
 		ob_start();
 		$this->admin->render_settings_page();
@@ -197,7 +197,7 @@ class Test_Euromail_Admin_Verify_Key extends WP_Ajax_UnitTestCase {
 
 		try {
 			$this->_handleAjax( 'euromail_verify_key' );
-		} catch ( WPAjaxDieContinueException $e ) {
+		} catch ( WPAjaxDieContinueException $e ) { // phpcs:ignore Generic.CodeAnalysis.EmptyStatement.DetectedCatch -- intentionally caught and discarded, see the comment below.
 			// Expected: wp_send_json_*() calls wp_die(), which
 			// WP_Ajax_UnitTestCase turns into this exception so the test
 			// can keep going and inspect the response.
@@ -232,7 +232,7 @@ class Test_Euromail_Admin_Verify_Key extends WP_Ajax_UnitTestCase {
 
 		try {
 			$this->_handleAjax( 'euromail_verify_key' );
-		} catch ( WPAjaxDieContinueException $e ) {
+		} catch ( WPAjaxDieContinueException $e ) { // phpcs:ignore Generic.CodeAnalysis.EmptyStatement.DetectedCatch -- intentionally caught and discarded, see the comment below.
 			// See above.
 		}
 
@@ -300,7 +300,7 @@ class Test_Euromail_Admin_Log_Row_Actions extends WP_UnitTestCase {
 	}
 
 	public function test_resend_of_an_already_sent_row_is_refused_and_the_row_is_unchanged() {
-		$id = $this->insert_row(
+		$id           = $this->insert_row(
 			array(
 				'status'     => 'sent',
 				'backend'    => 'api',
@@ -416,7 +416,11 @@ class Test_Euromail_Admin_Log_Row_Actions extends WP_UnitTestCase {
 						// No 'content' key: a redacted failed-row payload,
 						// as euromail_store_body=on produces.
 						'attachments' => array(
-							array( 'filename' => 'file.txt', 'content_type' => 'text/plain', 'path' => $path ),
+							array(
+								'filename'     => 'file.txt',
+								'content_type' => 'text/plain',
+								'path'         => $path,
+							),
 						),
 					)
 				),
@@ -460,7 +464,11 @@ class Test_Euromail_Admin_Log_Row_Actions extends WP_UnitTestCase {
 						'text_body'   => 'Body text',
 						'headers'     => array(),
 						'attachments' => array(
-							array( 'filename' => 'gone.txt', 'content_type' => 'text/plain', 'path' => $missing_path ),
+							array(
+								'filename'     => 'gone.txt',
+								'content_type' => 'text/plain',
+								'path'         => $missing_path,
+							),
 						),
 					)
 				),
@@ -528,8 +536,8 @@ class Euromail_Test_Fake_Emails_Client {
 
 	public $emails;
 
-	public function __construct( Euromail_Test_Fake_Emails_Resource $resource ) {
-		$this->emails = $resource;
+	public function __construct( Euromail_Test_Fake_Emails_Resource $fake ) {
+		$this->emails = $fake;
 	}
 }
 
@@ -572,7 +580,12 @@ class Test_Euromail_Admin_Refresh_Status extends WP_UnitTestCase {
 					Euromail_Test_Fake_Emails_Resource::returning(
 						new Euromail_Test_Fake_Email_Details(
 							'delivered',
-							array( array( 'type' => 'delivered', 'timestamp' => '2026-01-01T00:00:00Z' ) )
+							array(
+								array(
+									'type'      => 'delivered',
+									'timestamp' => '2026-01-01T00:00:00Z',
+								),
+							)
 						)
 					)
 				);
@@ -669,7 +682,10 @@ class Test_Euromail_Admin_Refresh_Status extends WP_UnitTestCase {
 				'status' => 'bounced',
 				'events' => wp_json_encode(
 					array(
-						array( 'type' => 'bounced', 'timestamp' => '2026-01-01T00:00:00Z' ),
+						array(
+							'type'      => 'bounced',
+							'timestamp' => '2026-01-01T00:00:00Z',
+						),
 					)
 				),
 			)
@@ -692,7 +708,10 @@ class Test_Euromail_Admin_Refresh_Status extends WP_UnitTestCase {
 				'status' => 'sent',
 				'events' => wp_json_encode(
 					array(
-						array( 'type' => 'sent', 'timestamp' => '2026-01-01T00:00:00Z' ),
+						array(
+							'type'      => 'sent',
+							'timestamp' => '2026-01-01T00:00:00Z',
+						),
 					)
 				),
 			)
@@ -704,9 +723,15 @@ class Test_Euromail_Admin_Refresh_Status extends WP_UnitTestCase {
 				'delivered',
 				array(
 					// Same type+timestamp as the existing local event: must not be duplicated.
-					array( 'type' => 'sent', 'timestamp' => '2026-01-01T00:00:00Z' ),
+					array(
+						'type'      => 'sent',
+						'timestamp' => '2026-01-01T00:00:00Z',
+					),
 					// A genuinely new event: must be added.
-					array( 'type' => 'delivered', 'timestamp' => '2026-01-02T00:00:00Z' ),
+					array(
+						'type'      => 'delivered',
+						'timestamp' => '2026-01-02T00:00:00Z',
+					),
 				)
 			)
 		);

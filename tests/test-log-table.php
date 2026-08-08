@@ -46,10 +46,10 @@ class Test_Euromail_Log_Table extends WP_UnitTestCase {
 		// WP_List_Table's bulk-action form on this page submits via GET,
 		// not POST — simulate that directly rather than $_POST, which is
 		// exactly the distinction this fix is guarding.
-		$_REQUEST['action'] = 'delete';
-		$_REQUEST['log']    = array( (string) $to_delete_1, (string) $to_delete_2 );
+		$_REQUEST['action']   = 'delete';
+		$_REQUEST['log']      = array( (string) $to_delete_1, (string) $to_delete_2 );
 		$_REQUEST['_wpnonce'] = wp_create_nonce( 'bulk-euromail_logs' );
-		$_GET = $_REQUEST;
+		$_GET                 = $_REQUEST;
 
 		$table = new Euromail_Log_Table();
 		$table->prepare_items();
@@ -63,7 +63,7 @@ class Test_Euromail_Log_Table extends WP_UnitTestCase {
 		$id = $this->insert_row();
 
 		$_REQUEST['action'] = '-1';
-		$_GET                = $_REQUEST;
+		$_GET               = $_REQUEST;
 
 		$table = new Euromail_Log_Table();
 		$table->prepare_items();

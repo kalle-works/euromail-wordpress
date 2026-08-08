@@ -136,7 +136,7 @@ class Test_Euromail_Mailer extends WP_UnitTestCase {
 		global $wpdb;
 
 		return $wpdb->get_row(
-			'SELECT * FROM ' . Euromail_Logger::table_name() . ' ORDER BY id DESC LIMIT 1',
+			'SELECT * FROM ' . Euromail_Logger::table_name() . ' ORDER BY id DESC LIMIT 1', // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
 			ARRAY_A
 		);
 	}
@@ -440,7 +440,7 @@ class Test_Euromail_Mailer extends WP_UnitTestCase {
 			return $query;
 		};
 
-		$before_count = (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . $table );
+		$before_count = (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . $table ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
 
 		$wpdb->suppress_errors( true );
 		add_filter( 'query', $break_insert );
@@ -452,7 +452,7 @@ class Test_Euromail_Mailer extends WP_UnitTestCase {
 
 		$this->assertTrue( $result, 'A failed log insert must not stop the send from succeeding.' );
 
-		$after_count = (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . $table );
+		$after_count = (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . $table ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
 		$this->assertSame( $before_count, $after_count, 'No row should have been inserted.' );
 	}
 

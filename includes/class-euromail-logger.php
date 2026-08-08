@@ -96,7 +96,7 @@ class Euromail_Logger {
 		global $wpdb;
 
 		$row = $wpdb->get_row(
-			$wpdb->prepare( 'SELECT * FROM ' . self::table_name() . ' WHERE id = %d', (int) $id ),
+			$wpdb->prepare( 'SELECT * FROM ' . self::table_name() . ' WHERE id = %d', (int) $id ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
 			ARRAY_A
 		);
 
@@ -131,7 +131,7 @@ class Euromail_Logger {
 		}
 
 		$row = $wpdb->get_row(
-			$wpdb->prepare( 'SELECT * FROM ' . self::table_name() . ' WHERE api_id = %s LIMIT 1', (string) $api_id ),
+			$wpdb->prepare( 'SELECT * FROM ' . self::table_name() . ' WHERE api_id = %s LIMIT 1', (string) $api_id ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
 			ARRAY_A
 		);
 
@@ -164,7 +164,7 @@ class Euromail_Logger {
 
 		$ids = $wpdb->get_col(
 			$wpdb->prepare(
-				'SELECT id FROM ' . self::table_name() . ' WHERE ( status = %s AND next_attempt_at <= %s ) OR ( status = %s AND updated_at <= %s ) ORDER BY updated_at ASC LIMIT %d',
+				'SELECT id FROM ' . self::table_name() . ' WHERE ( status = %s AND next_attempt_at <= %s ) OR ( status = %s AND updated_at <= %s ) ORDER BY updated_at ASC LIMIT %d', // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
 				'queued',
 				$now,
 				'sending',
@@ -201,7 +201,7 @@ class Euromail_Logger {
 
 		$affected = $wpdb->query(
 			$wpdb->prepare(
-				'UPDATE ' . self::table_name() . " SET status = 'sending', updated_at = %s WHERE id = %d AND ( status = 'queued' OR ( status = 'sending' AND updated_at <= %s ) )",
+				'UPDATE ' . self::table_name() . " SET status = 'sending', updated_at = %s WHERE id = %d AND ( status = 'queued' OR ( status = 'sending' AND updated_at <= %s ) )", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
 				current_time( 'mysql' ),
 				(int) $id,
 				$stale_sending_before

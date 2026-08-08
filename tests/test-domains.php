@@ -47,8 +47,8 @@ class Euromail_Test_Fake_Domains_Client {
 
 	public $domains;
 
-	public function __construct( Euromail_Test_Fake_Domains_Resource $resource ) {
-		$this->domains = $resource;
+	public function __construct( Euromail_Test_Fake_Domains_Resource $fake ) {
+		$this->domains = $fake;
 	}
 }
 
@@ -74,9 +74,9 @@ class Test_Euromail_Admin_Domains_Page extends WP_UnitTestCase {
 		return ob_get_clean();
 	}
 
-	private function fake_client_filter( Euromail_Test_Fake_Domains_Resource $resource ) {
-		return function () use ( $resource ) {
-			return new Euromail_Test_Fake_Domains_Client( $resource );
+	private function fake_client_filter( Euromail_Test_Fake_Domains_Resource $fake ) {
+		return function () use ( $fake ) {
+			return new Euromail_Test_Fake_Domains_Client( $fake );
 		};
 	}
 

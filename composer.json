@@ -8,7 +8,18 @@
         "euromail/euromail-php": "@dev|^1.0"
     },
     "require-dev": {
-        "yoast/phpunit-polyfills": "^1.1"
+        "yoast/phpunit-polyfills": "^1.1",
+        "wp-coding-standards/wpcs": "^3.4",
+        "dealerdirect/phpcodesniffer-composer-installer": "^1.2"
+    },
+    "config": {
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        }
+    },
+    "scripts": {
+        "phpcs": "phpcs",
+        "phpcbf": "phpcbf"
     },
     "repositories": [
         {
@@ -17,6 +28,10 @@
             "options": {
                 "symlink": false
             }
+        },
+        {
+            "type": "vcs",
+            "url": "https://github.com/kalle-works/euromail-php"
         }
     ],
     "minimum-stability": "dev",
