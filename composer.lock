@@ -12,7 +12,7 @@
             "dist": {
                 "type": "path",
                 "url": "../euromail-php",
-                "reference": "32dec72f7e21271e5b603412346498d0d58603eb"
+                "reference": "74385e8e2b9f9975b7ae524aec0a1213fcd9d0d9"
             },
             "require": {
                 "ext-json": "*",
