@@ -9,6 +9,10 @@
  *   graceful, specific notice, not a fatal.
  * - Any other SDK failure shows a graceful notice (the exception's own
  *   message), not a fatal.
+ * - A non-array element in the SDK's response (the SDK returns domains as
+ *   raw arrays with no typed model, so a malformed response element is not
+ *   something the plugin controls) is skipped rather than reaching
+ *   domain_field()/domain_status_label() and fataling the page.
  *
  * @package Euromail
  */
@@ -134,5 +138,32 @@ class Test_Euromail_Admin_Domains_Page extends WP_UnitTestCase {
 		$html = $this->render();
 
 		$this->assertStringContainsString( 'network unreachable', $html );
+	}
+
+	public function test_a_non_array_element_in_the_response_is_skipped_without_a_fatal() {
+		update_option( 'euromail_api_key', 'em_live_test' );
+		add_filter(
+			'euromail_domains_client',
+			$this->fake_client_filter(
+				Euromail_Test_Fake_Domains_Resource::returning(
+					array(
+						array(
+							'domain' => 'example.com',
+							'status' => 'verified',
+						),
+						'this-is-not-an-array', // Malformed element, e.g. an unexpected SDK response shape.
+					)
+				)
+			)
+		);
+
+		// No fatal is the primary assertion here: PHPUnit turns a PHP
+		// fatal/TypeError into a test failure, so simply reaching this
+		// line proves the malformed element didn't reach domain_field()
+		// (which requires an array argument).
+		$html = $this->render();
+
+		$this->assertStringContainsString( 'example.com', $html, 'The well-formed row must still render.' );
+		$this->assertStringNotContainsString( 'this-is-not-an-array', $html, 'The malformed element must be skipped, not rendered.' );
 	}
 }

@@ -28,6 +28,16 @@ class Euromail_Admin {
 	private $last_resend_missing_attachment;
 
 	/**
+	 * Hook suffix of the Log page, as returned by add_submenu_page() — the
+	 * `load-{$log_page_hook}` action is where resend/delete/refresh_status
+	 * are handled, since it fires before admin-header.php sends any
+	 * output (unlike the page's own render callback).
+	 *
+	 * @var string
+	 */
+	public $log_page_hook;
+
+	/**
 	 * Hook into WordPress.
 	 */
 	public function init() {
@@ -67,7 +77,7 @@ class Euromail_Admin {
 			array( $this, 'render_send_test_page' )
 		);
 
-		add_submenu_page(
+		$this->log_page_hook = add_submenu_page(
 			'euromail',
 			__( 'Log', 'euromail' ),
 			__( 'Log', 'euromail' ),
@@ -75,6 +85,12 @@ class Euromail_Admin {
 			'euromail-log',
 			array( $this, 'render_log_page' )
 		);
+
+		// Resend/delete/refresh_status all redirect after acting, so they
+		// must run before admin-header.php sends any output — the render
+		// callback above runs too late for that; `load-{hook}` runs early
+		// enough. See maybe_handle_log_page_actions().
+		add_action( "load-{$this->log_page_hook}", array( $this, 'maybe_handle_log_page_actions' ) );
 
 		add_submenu_page(
 			'euromail',
@@ -801,7 +817,15 @@ class Euromail_Admin {
 		}
 
 		try {
-			return array( $client->domains->all(), null );
+			$domains = $client->domains->all();
+
+			// The SDK returns domains as raw arrays with no typed model —
+			// defend against a malformed/unexpected element (e.g. a
+			// string) reaching domain_field()/domain_status_label(), which
+			// both require an array and would otherwise fatal the page.
+			$domains = is_array( $domains ) ? array_values( array_filter( $domains, 'is_array' ) ) : array();
+
+			return array( $domains, null );
 		} catch ( EuroMail\Exceptions\AuthenticationException $e ) {
 			return array( null, __( 'The configured API key does not have permission to list domains.', 'euromail' ) );
 		} catch ( Throwable $e ) {
@@ -848,6 +872,11 @@ class Euromail_Admin {
 	 * Render the Log page: a WP_List_Table of delivery attempts, with
 	 * status filter views, Resend/Delete row actions, and a bulk Delete
 	 * action — or, for `?action=view`, a single row's full detail.
+	 *
+	 * Resend/Delete/Refresh status are no longer handled here: by the time
+	 * this callback runs, admin-header.php has already sent output, which
+	 * is too late for their wp_safe_redirect(). See
+	 * maybe_handle_log_page_actions(), wired to `load-{$log_page_hook}`.
 	 */
 	public function render_log_page() {
 		if ( ! current_user_can( 'manage_options' ) ) {
@@ -858,8 +887,6 @@ class Euromail_Admin {
 			$this->render_log_detail_page( absint( $_GET['id'] ) );
 			return;
 		}
-
-		$this->maybe_handle_log_row_action();
 
 		$table = new Euromail_Log_Table();
 		$table->prepare_items();
@@ -883,15 +910,13 @@ class Euromail_Admin {
 	/**
 	 * Render the detail view for a single log row: every column, the
 	 * webhook events timeline, and a readable preview of the stored
-	 * payload. Also handles the "Refresh status" action (?action=refresh_status)
-	 * before rendering, redirecting back to a clean ?action=view URL
-	 * afterwards so reloading never repeats it.
+	 * payload. The "Refresh status" action itself (?action=refresh_status)
+	 * is handled earlier, on `load-{$log_page_hook}` — by the time this
+	 * runs, a refresh request has already redirected to ?action=view.
 	 *
 	 * @param int $id Log row ID.
 	 */
 	private function render_log_detail_page( $id ) {
-		$this->maybe_handle_refresh_status( $id );
-
 		$row = Euromail_Logger::get( $id );
 
 		$back_url = admin_url( 'admin.php?page=euromail-log' );
@@ -1009,6 +1034,34 @@ class Euromail_Admin {
 	}
 
 	/**
+	 * Dispatch any redirect-emitting Log page action (Resend, Delete,
+	 * Refresh status) on `load-{$log_page_hook}`, fired by WordPress before
+	 * admin-header.php sends any output. Calling wp_safe_redirect() from
+	 * within the page's own render callback (render_log_page() /
+	 * render_log_detail_page()) does not work: admin.php has already
+	 * required admin-header.php — echoing the full page chrome (doctype,
+	 * head, admin bar) — before invoking that callback, so the redirect
+	 * header can no longer be sent. This hook runs early enough.
+	 */
+	public function maybe_handle_log_page_actions() {
+		if ( ! isset( $_GET['action'], $_GET['id'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			return;
+		}
+
+		$action = sanitize_text_field( wp_unslash( $_GET['action'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$id     = absint( $_GET['id'] );
+
+		if ( 'refresh_status' === $action ) {
+			$this->maybe_handle_refresh_status( $id );
+			return;
+		}
+
+		if ( in_array( $action, array( 'resend', 'delete' ), true ) ) {
+			$this->maybe_handle_log_row_action();
+		}
+	}
+
+	/**
 	 * Handle the "Refresh status" action (a GET request from the detail
 	 * page's own button), then redirect back to a clean ?action=view URL
 	 * so reloading the page never repeats it.
@@ -1044,11 +1097,14 @@ class Euromail_Admin {
 
 	/**
 	 * Fetch the current status/events for an API-sent row from
-	 * euromail.dev and sync them onto the row — a full replace of the
-	 * events array with the API's own authoritative list (distinct from
-	 * the webhook receiver's incremental append), since this is an
-	 * explicit "give me the current truth" sync, not another delivery
-	 * event arriving.
+	 * euromail.dev and sync them onto the row. The API's status is applied
+	 * through the same Euromail_Status_Promoter rules the webhook receiver
+	 * uses — no demotion, bounced/complained permanent, an unrecognized
+	 * status ignored — since euromail.dev's own record can itself lag
+	 * behind a webhook this site already processed. Events are merged
+	 * (deduped by type+timestamp), not replaced: a webhook-recorded event
+	 * must survive a refresh even if the API's response for this call
+	 * happens to omit it.
 	 *
 	 * @param int $id Log row ID.
 	 * @return string Notice key: 'refreshed', 'refresh_not_available', or 'refresh_failed'.
@@ -1089,26 +1145,63 @@ class Euromail_Admin {
 			return 'refresh_failed';
 		}
 
-		$events = array();
+		$api_events = array();
 
 		foreach ( (array) $details->events as $event ) {
-			$event    = (array) $event;
-			$events[] = array(
+			$event        = (array) $event;
+			$api_events[] = array(
 				'type'      => isset( $event['type'] ) ? $event['type'] : ( isset( $event['event'] ) ? $event['event'] : '' ),
 				'timestamp' => isset( $event['timestamp'] ) ? $event['timestamp'] : ( isset( $event['created_at'] ) ? $event['created_at'] : '' ),
 				'raw'       => $event,
 			);
 		}
 
+		$merged_events = self::merge_events( self::decode_events( $row['events'] ), $api_events );
+		$api_status    = isset( $details->status ) ? (string) $details->status : '';
+		$new_status    = ( '' !== $api_status ) ? Euromail_Status_Promoter::promote( $row['status'], $api_status ) : $row['status'];
+
 		Euromail_Logger::update(
 			$id,
 			array(
-				'status' => ( isset( $details->status ) && '' !== (string) $details->status ) ? $details->status : $row['status'],
-				'events' => wp_json_encode( $events ),
+				'status' => $new_status,
+				'events' => wp_json_encode( $merged_events ),
 			)
 		);
 
 		return 'refreshed';
+	}
+
+	/**
+	 * Merge an API-fetched events list into the existing local timeline,
+	 * deduped by type+timestamp, without ever dropping a locally-recorded
+	 * event the API response happens not to include.
+	 *
+	 * @param array $local_events    Row's existing decoded events.
+	 * @param array $incoming_events Newly-fetched events from the API.
+	 * @return array
+	 */
+	private static function merge_events( array $local_events, array $incoming_events ) {
+		$merged = $local_events;
+
+		foreach ( $incoming_events as $incoming ) {
+			$already_present = false;
+
+			foreach ( $merged as $existing ) {
+				if ( isset( $existing['type'], $existing['timestamp'] )
+					&& isset( $incoming['type'], $incoming['timestamp'] )
+					&& $existing['type'] === $incoming['type']
+					&& $existing['timestamp'] === $incoming['timestamp'] ) {
+					$already_present = true;
+					break;
+				}
+			}
+
+			if ( ! $already_present ) {
+				$merged[] = $incoming;
+			}
+		}
+
+		return $merged;
 	}
 
 	/**

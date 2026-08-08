@@ -622,4 +622,132 @@ class Test_Euromail_Admin_Refresh_Status extends WP_UnitTestCase {
 		$this->assertSame( 'refresh_failed', $notice );
 		$this->assertSame( $before, Euromail_Logger::get( $id ), 'A failed refresh must leave the row untouched.' );
 	}
+
+	// -- Refresh must obey the same promotion rules as the webhook receiver --
+
+	private function fake_client_returning( $status, array $events ) {
+		return function () use ( $status, $events ) {
+			return new Euromail_Test_Fake_Emails_Client(
+				Euromail_Test_Fake_Emails_Resource::returning( new Euromail_Test_Fake_Email_Details( $status, $events ) )
+			);
+		};
+	}
+
+	public function test_refresh_does_not_demote_a_higher_local_status() {
+		$id = $this->insert_row( array( 'status' => 'opened' ) );
+
+		add_filter( 'euromail_refresh_status_client', $this->fake_client_returning( 'delivered', array() ) );
+
+		$this->admin->refresh_status_from_api( $id );
+
+		$this->assertSame( 'opened', Euromail_Logger::get( $id )['status'], 'The API reporting a lower-ranked status must not demote a row already further along.' );
+	}
+
+	public function test_refresh_never_overwrites_a_bounced_status() {
+		$id = $this->insert_row( array( 'status' => 'bounced' ) );
+
+		add_filter( 'euromail_refresh_status_client', $this->fake_client_returning( 'delivered', array() ) );
+
+		$this->admin->refresh_status_from_api( $id );
+
+		$this->assertSame( 'bounced', Euromail_Logger::get( $id )['status'], 'bounced is permanent — the API reporting anything else must not overwrite it.' );
+	}
+
+	public function test_refresh_ignores_an_unrecognized_api_status() {
+		$id = $this->insert_row( array( 'status' => 'sent' ) );
+
+		add_filter( 'euromail_refresh_status_client', $this->fake_client_returning( 'some-future-status', array() ) );
+
+		$this->admin->refresh_status_from_api( $id );
+
+		$this->assertSame( 'sent', Euromail_Logger::get( $id )['status'], 'An unrecognized status from the API must be ignored, not applied verbatim.' );
+	}
+
+	public function test_a_local_bounced_event_survives_a_refresh_whose_api_response_has_empty_events() {
+		$id = $this->insert_row(
+			array(
+				'status' => 'bounced',
+				'events' => wp_json_encode(
+					array(
+						array( 'type' => 'bounced', 'timestamp' => '2026-01-01T00:00:00Z' ),
+					)
+				),
+			)
+		);
+
+		add_filter( 'euromail_refresh_status_client', $this->fake_client_returning( 'bounced', array() ) );
+
+		$notice = $this->admin->refresh_status_from_api( $id );
+
+		$this->assertSame( 'refreshed', $notice );
+
+		$events = json_decode( Euromail_Logger::get( $id )['events'], true );
+		$this->assertCount( 1, $events, 'The webhook-recorded local event must survive a refresh whose API response has no events at all.' );
+		$this->assertSame( 'bounced', $events[0]['type'] );
+	}
+
+	public function test_refresh_merges_new_api_events_with_existing_local_events_without_duplicating() {
+		$id = $this->insert_row(
+			array(
+				'status' => 'sent',
+				'events' => wp_json_encode(
+					array(
+						array( 'type' => 'sent', 'timestamp' => '2026-01-01T00:00:00Z' ),
+					)
+				),
+			)
+		);
+
+		add_filter(
+			'euromail_refresh_status_client',
+			$this->fake_client_returning(
+				'delivered',
+				array(
+					// Same type+timestamp as the existing local event: must not be duplicated.
+					array( 'type' => 'sent', 'timestamp' => '2026-01-01T00:00:00Z' ),
+					// A genuinely new event: must be added.
+					array( 'type' => 'delivered', 'timestamp' => '2026-01-02T00:00:00Z' ),
+				)
+			)
+		);
+
+		$this->admin->refresh_status_from_api( $id );
+
+		$events = json_decode( Euromail_Logger::get( $id )['events'], true );
+		$this->assertCount( 2, $events, 'A duplicate type+timestamp must be deduped; a genuinely new event must be added.' );
+	}
+}
+
+/**
+ * Guarantees under test:
+ * - Resend/Delete/Refresh status are dispatched from a `load-{$log_page_hook}`
+ *   action, not from the Log page's own render callback — admin.php has
+ *   already sent the admin chrome (doctype, head, admin bar) via
+ *   admin-header.php by the time a submenu page's render callback runs, so
+ *   a wp_safe_redirect() from inside it can no longer succeed. load- fires
+ *   early enough.
+ */
+class Test_Euromail_Admin_Log_Page_Actions_Wiring extends WP_UnitTestCase {
+
+	public function tear_down() {
+		global $menu, $submenu;
+		$menu    = array();
+		$submenu = array();
+		parent::tear_down();
+	}
+
+	public function test_add_menu_pages_wires_a_load_hook_for_log_page_actions() {
+		// add_submenu_page() itself checks the current user's capability
+		// and returns false (no hook suffix at all) without one.
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+
+		$admin = new Euromail_Admin();
+		$admin->add_menu_pages();
+
+		$this->assertNotEmpty( $admin->log_page_hook, 'add_submenu_page() must return a usable hook suffix.' );
+		$this->assertNotFalse(
+			has_action( "load-{$admin->log_page_hook}", array( $admin, 'maybe_handle_log_page_actions' ) ),
+			'maybe_handle_log_page_actions() must be wired to load-{hook}, which runs before admin-header.php sends any output.'
+		);
+	}
 }
