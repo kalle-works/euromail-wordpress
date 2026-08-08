@@ -1,0 +1,24 @@
+{
+    "name": "kalle-works/euromail-wordpress",
+    "description": "Euromail – SMTP & Email API WordPress plugin",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "require": {
+        "php": ">=7.4",
+        "euromail/euromail-php": "@dev|^1.0"
+    },
+    "require-dev": {
+        "yoast/phpunit-polyfills": "^1.1"
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../euromail-php",
+            "options": {
+                "symlink": false
+            }
+        }
+    ],
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
