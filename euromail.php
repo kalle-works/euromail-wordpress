@@ -38,6 +38,7 @@ if ( file_exists( EUROMAIL_PLUGIN_DIR . 'vendor/autoload.php' ) ) {
 define( 'EUROMAIL_SDK_LOADED', interface_exists( 'EuroMail\\Http\\TransportInterface' ) && class_exists( 'EuroMail\\Client' ) );
 
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-settings.php';
+require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-status.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-logger.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-retention.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-smtp-exception.php';
