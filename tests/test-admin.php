@@ -482,3 +482,144 @@ class Test_Euromail_Admin_Log_Row_Actions extends WP_UnitTestCase {
 		$this->assertSame( 'failed', $row['status'], 'A resend refused for a missing attachment must leave the row exactly as it was, not silently send without the attachment.' );
 	}
 }
+
+/**
+ * Minimal fake of the SDK's Client, only exposing what
+ * Euromail_Admin::refresh_status_from_api() touches (->emails->get($id)).
+ */
+class Euromail_Test_Fake_Email_Details {
+
+	public $status;
+	public $events;
+
+	public function __construct( $status, array $events ) {
+		$this->status = $status;
+		$this->events = $events;
+	}
+}
+
+class Euromail_Test_Fake_Emails_Resource {
+
+	private $details;
+	private $exception;
+
+	public static function returning( Euromail_Test_Fake_Email_Details $details ) {
+		$resource          = new self();
+		$resource->details = $details;
+		return $resource;
+	}
+
+	public static function failing( Throwable $exception ) {
+		$resource            = new self();
+		$resource->exception = $exception;
+		return $resource;
+	}
+
+	public function get( $id ) {
+		if ( null !== $this->exception ) {
+			throw $this->exception;
+		}
+
+		return $this->details;
+	}
+}
+
+class Euromail_Test_Fake_Emails_Client {
+
+	public $emails;
+
+	public function __construct( Euromail_Test_Fake_Emails_Resource $resource ) {
+		$this->emails = $resource;
+	}
+}
+
+class Test_Euromail_Admin_Refresh_Status extends WP_UnitTestCase {
+
+	private $admin;
+
+	public function set_up() {
+		parent::set_up();
+		update_option( 'euromail_api_key', 'em_live_test' );
+		$this->admin = new Euromail_Admin();
+	}
+
+	public function tear_down() {
+		delete_option( 'euromail_api_key' );
+		remove_all_filters( 'euromail_refresh_status_client' );
+		parent::tear_down();
+	}
+
+	private function insert_row( array $overrides = array() ) {
+		$defaults = array(
+			'status'          => 'sent',
+			'backend'         => 'api',
+			'api_id'          => 'api-uuid-123',
+			'idempotency_key' => wp_generate_uuid4(),
+			'mail_to'         => 'recipient@example.com',
+			'subject'         => 'Refresh status test',
+		);
+
+		return Euromail_Logger::create( array_merge( $defaults, $overrides ) );
+	}
+
+	public function test_refreshes_status_and_events_from_the_api() {
+		$id = $this->insert_row( array( 'status' => 'sent' ) );
+
+		add_filter(
+			'euromail_refresh_status_client',
+			function () {
+				return new Euromail_Test_Fake_Emails_Client(
+					Euromail_Test_Fake_Emails_Resource::returning(
+						new Euromail_Test_Fake_Email_Details(
+							'delivered',
+							array( array( 'type' => 'delivered', 'timestamp' => '2026-01-01T00:00:00Z' ) )
+						)
+					)
+				);
+			}
+		);
+
+		$notice = $this->admin->refresh_status_from_api( $id );
+
+		$this->assertSame( 'refreshed', $notice );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertSame( 'delivered', $row['status'] );
+
+		$events = json_decode( $row['events'], true );
+		$this->assertCount( 1, $events );
+		$this->assertSame( 'delivered', $events[0]['type'] );
+	}
+
+	public function test_refresh_is_not_available_for_a_row_not_sent_through_the_api() {
+		$id = $this->insert_row(
+			array(
+				'backend' => 'smtp',
+				'api_id'  => null,
+			)
+		);
+
+		$notice = $this->admin->refresh_status_from_api( $id );
+
+		$this->assertSame( 'refresh_not_available', $notice );
+	}
+
+	public function test_refresh_failed_when_the_sdk_call_throws_and_leaves_the_row_untouched() {
+		$id = $this->insert_row();
+
+		add_filter(
+			'euromail_refresh_status_client',
+			function () {
+				return new Euromail_Test_Fake_Emails_Client(
+					Euromail_Test_Fake_Emails_Resource::failing( new Exception( 'network error' ) )
+				);
+			}
+		);
+
+		$before = Euromail_Logger::get( $id );
+		$notice = $this->admin->refresh_status_from_api( $id );
+
+		$this->assertSame( 'refresh_failed', $notice );
+		$this->assertSame( $before, Euromail_Logger::get( $id ), 'A failed refresh must leave the row untouched.' );
+	}
+}

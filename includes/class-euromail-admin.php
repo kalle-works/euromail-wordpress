@@ -1053,7 +1053,7 @@ class Euromail_Admin {
 	 * @param int $id Log row ID.
 	 * @return string Notice key: 'refreshed', 'refresh_not_available', or 'refresh_failed'.
 	 */
-	private function refresh_status_from_api( $id ) {
+	public function refresh_status_from_api( $id ) {
 		$row = Euromail_Logger::get( $id );
 
 		if ( ! $row || 'api' !== $row['backend'] || empty( $row['api_id'] ) ) {
