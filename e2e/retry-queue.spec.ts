@@ -66,7 +66,7 @@ test.describe( 'Retry queue via cron (scenario 6)', () => {
 
 		await page.goto( '/wp-admin/admin.php?page=euromail-log' );
 		const firstRow = page.locator( '.wp-list-table tbody tr' ).first();
-		await expect( firstRow ).toContainText( 'queued' );
+		await expect( firstRow ).toContainText( 'Queued' );
 
 		const firstAttempt = await ( await request.get( `${ MOCK_API_URL }/_requests` ) ).json();
 		expect( firstAttempt.requests.length ).toBe( 1 );
@@ -81,7 +81,7 @@ test.describe( 'Retry queue via cron (scenario 6)', () => {
 
 		await page.goto( '/wp-admin/admin.php?page=euromail-log' );
 		const rowAfterRetry = page.locator( '.wp-list-table tbody tr' ).first();
-		await expect( rowAfterRetry ).toContainText( 'sent' );
+		await expect( rowAfterRetry ).toContainText( 'Sent' );
 
 		const afterRetry = await ( await request.get( `${ MOCK_API_URL }/_requests` ) ).json();
 		expect( afterRetry.requests.length ).toBe( 2 );

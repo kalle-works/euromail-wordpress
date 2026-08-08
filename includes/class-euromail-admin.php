@@ -944,7 +944,7 @@ class Euromail_Admin {
 
 			<table class="form-table">
 				<tr><th scope="row"><?php esc_html_e( 'ID', 'euromail' ); ?></th><td><?php echo esc_html( $row['id'] ); ?></td></tr>
-				<tr><th scope="row"><?php esc_html_e( 'Status', 'euromail' ); ?></th><td><?php echo esc_html( $row['status'] ); ?></td></tr>
+				<tr><th scope="row"><?php esc_html_e( 'Status', 'euromail' ); ?></th><td><?php echo esc_html( Euromail_Log_Table::status_label( $row['status'] ) ); ?></td></tr>
 				<tr><th scope="row"><?php esc_html_e( 'Backend', 'euromail' ); ?></th><td><?php echo esc_html( '' !== (string) $row['backend'] ? $row['backend'] : '—' ); ?></td></tr>
 				<tr><th scope="row"><?php esc_html_e( 'Created', 'euromail' ); ?></th><td><?php echo esc_html( $row['created_at'] ); ?></td></tr>
 				<tr><th scope="row"><?php esc_html_e( 'Updated', 'euromail' ); ?></th><td><?php echo esc_html( $row['updated_at'] ); ?></td></tr>
