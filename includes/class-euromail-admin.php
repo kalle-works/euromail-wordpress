@@ -15,6 +15,19 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Euromail_Admin {
 
 	/**
+	 * Filename of the attachment that blocked the most recent resend, set
+	 * by resend_log_row() right before it returns the
+	 * 'resend_missing_attachment' notice key. A side channel so
+	 * maybe_handle_log_row_action() can carry the specific filename into
+	 * the redirect's query string, while process_log_row_action() keeps
+	 * its existing, tested contract of returning a plain notice-key
+	 * string.
+	 *
+	 * @var string|null
+	 */
+	private $last_resend_missing_attachment;
+
+	/**
 	 * Hook into WordPress.
 	 */
 	public function init() {
@@ -290,7 +303,7 @@ class Euromail_Admin {
 						<td>
 							<label>
 								<input type="checkbox" id="euromail_store_body" name="euromail_store_body" value="1" <?php checked( $store_body ); ?> />
-								<?php esc_html_e( 'Keep the message payload in the log after a successful send', 'euromail' ); ?>
+								<?php esc_html_e( 'Keep the message body in the log once a send finishes, success or failure; also enables resending failed emails from the log', 'euromail' ); ?>
 							</label>
 						</td>
 					</tr>
@@ -774,10 +787,11 @@ class Euromail_Admin {
 		$notice = sanitize_text_field( wp_unslash( $_GET['euromail_log_notice'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 
 		$messages = array(
-			'deleted'       => array( 'success', __( 'Log entry deleted.', 'euromail' ) ),
-			'resent'        => array( 'success', __( 'Email resent successfully.', 'euromail' ) ),
-			'resend_queued' => array( 'success', __( 'Resend queued; it will retry automatically if it does not go out immediately.', 'euromail' ) ),
-			'resend_failed' => array( 'error', __( 'Could not resend this email — it has no stored payload to resend.', 'euromail' ) ),
+			'deleted'                   => array( 'success', __( 'Log entry deleted.', 'euromail' ) ),
+			'resent'                    => array( 'success', __( 'Email resent successfully.', 'euromail' ) ),
+			'resend_queued'             => array( 'success', __( 'Resend queued; it will retry automatically if it does not go out immediately.', 'euromail' ) ),
+			'resend_failed'             => array( 'error', __( 'Could not resend this email — it has no stored payload to resend.', 'euromail' ) ),
+			'resend_missing_attachment' => array( 'error', __( 'Could not resend this email — attachment "%s" no longer exists and cannot be resent.', 'euromail' ) ),
 		);
 
 		if ( ! isset( $messages[ $notice ] ) ) {
@@ -785,6 +799,10 @@ class Euromail_Admin {
 		}
 
 		list( $type, $text ) = $messages[ $notice ];
+
+		if ( 'resend_missing_attachment' === $notice && isset( $_GET['euromail_log_notice_detail'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$text = sprintf( $text, sanitize_text_field( wp_unslash( $_GET['euromail_log_notice_detail'] ) ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		}
 
 		printf( '<div class="notice notice-%1$s is-dismissible"><p>%2$s</p></div>', esc_attr( $type ), esc_html( $text ) );
 	}
@@ -813,15 +831,16 @@ class Euromail_Admin {
 
 		$notice = $this->process_log_row_action( $action, $id );
 
-		wp_safe_redirect(
-			add_query_arg(
-				array(
-					'page'                => 'euromail-log',
-					'euromail_log_notice' => $notice,
-				),
-				admin_url( 'admin.php' )
-			)
+		$redirect_args = array(
+			'page'                => 'euromail-log',
+			'euromail_log_notice' => $notice,
 		);
+
+		if ( null !== $this->last_resend_missing_attachment ) {
+			$redirect_args['euromail_log_notice_detail'] = $this->last_resend_missing_attachment;
+		}
+
+		wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -832,7 +851,7 @@ class Euromail_Admin {
 	 *
 	 * @param string $action 'resend' or 'delete'.
 	 * @param int    $id     Log row ID.
-	 * @return string Notice key: 'deleted', 'resent', 'resend_queued', or 'resend_failed'.
+	 * @return string Notice key: 'deleted', 'resent', 'resend_queued', 'resend_failed', or 'resend_missing_attachment'.
 	 */
 	public function process_log_row_action( $action, $id ) {
 		if ( 'delete' === $action ) {
@@ -844,30 +863,53 @@ class Euromail_Admin {
 	}
 
 	/**
-	 * Re-queue a log row for an immediate retry attempt: a fresh
-	 * idempotency key (this is a distinct new send attempt, not the same
-	 * logical send being automatically retried) and a reset attempts
-	 * count (a full new budget), processed synchronously so the admin
-	 * gets an immediate result instead of waiting for the next cron tick.
+	 * Re-queue a log row for an immediate retry attempt: resets attempts to
+	 * 0 (a manual resend gets a fresh full retry budget) and processes it
+	 * synchronously so the admin gets an immediate result instead of
+	 * waiting for the next cron tick. Reuses the row's existing idempotency
+	 * key — if the original attempt actually reached the server despite the
+	 * recorded failure, that same-key dedupe prevents a duplicate delivery;
+	 * if it never arrived, the resend proceeds normally.
+	 *
+	 * A 'failed' row's stored payload may be redacted (attachment content
+	 * stripped, per euromail_store_body) rather than absent, so any
+	 * attachment missing its content is re-read fresh from its recorded
+	 * 'path' before resending. If that path no longer exists, the resend is
+	 * refused outright — never silently sent without the attachment.
 	 *
 	 * @param int $id Log row ID.
-	 * @return string Notice key: 'resent', 'resend_queued', or 'resend_failed'.
+	 * @return string Notice key: 'resent', 'resend_queued', 'resend_failed', or 'resend_missing_attachment'.
 	 */
 	private function resend_log_row( $id ) {
+		$this->last_resend_missing_attachment = null;
+
 		$row = Euromail_Logger::get( $id );
 
 		if ( ! $row || empty( $row['payload'] ) ) {
 			return 'resend_failed';
 		}
 
+		$email = json_decode( $row['payload'], true );
+
+		if ( ! is_array( $email ) ) {
+			return 'resend_failed';
+		}
+
+		$missing_attachment = $this->rehydrate_attachments_for_resend( $email );
+
+		if ( null !== $missing_attachment ) {
+			$this->last_resend_missing_attachment = $missing_attachment;
+			return 'resend_missing_attachment';
+		}
+
 		Euromail_Logger::update(
 			$id,
 			array(
-				'status'          => 'retrying',
+				'status'          => 'queued',
 				'attempts'        => 0,
 				'error'           => null,
-				'idempotency_key' => wp_generate_uuid4(),
 				'next_attempt_at' => current_time( 'mysql' ),
+				'payload'         => wp_json_encode( $email ),
 			)
 		);
 
@@ -876,5 +918,39 @@ class Euromail_Admin {
 		$row = Euromail_Logger::get( $id );
 
 		return ( $row && 'sent' === $row['status'] ) ? 'resent' : 'resend_queued';
+	}
+
+	/**
+	 * Fill in 'content' for any attachment in a decoded payload that is
+	 * missing it (a redacted terminal-row payload being resent), reading
+	 * fresh bytes from its stored 'path'. Attachments that already carry
+	 * content are left untouched. Mutates $email in place.
+	 *
+	 * @param array $email Canonical email array, modified by reference.
+	 * @return string|null The filename of the first attachment whose file
+	 *                      no longer exists, or null when every attachment
+	 *                      could be resent.
+	 */
+	private function rehydrate_attachments_for_resend( array &$email ) {
+		if ( empty( $email['attachments'] ) ) {
+			return null;
+		}
+
+		foreach ( $email['attachments'] as &$attachment ) {
+			if ( ! empty( $attachment['content'] ) ) {
+				continue;
+			}
+
+			$path = isset( $attachment['path'] ) ? $attachment['path'] : '';
+
+			if ( '' === $path || ! file_exists( $path ) ) {
+				return isset( $attachment['filename'] ) ? $attachment['filename'] : $path;
+			}
+
+			$attachment['content'] = base64_encode( (string) file_get_contents( $path ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents, WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode
+		}
+		unset( $attachment );
+
+		return null;
 	}
 }

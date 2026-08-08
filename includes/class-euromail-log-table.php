@@ -25,7 +25,7 @@ class Euromail_Log_Table extends WP_List_Table {
 	 *
 	 * @var string[]
 	 */
-	const STATUSES = array( 'sending', 'sent', 'retrying', 'failed' );
+	const STATUSES = array( 'sending', 'sent', 'queued', 'failed' );
 
 	public function __construct() {
 		parent::__construct(
@@ -158,7 +158,7 @@ class Euromail_Log_Table extends WP_List_Table {
 
 		$actions['view'] = sprintf( '<a href="%s">%s</a>', esc_url( $view_url ), esc_html__( 'View', 'euromail' ) );
 
-		if ( in_array( $item['status'], array( 'failed', 'retrying' ), true ) && ! empty( $item['payload'] ) ) {
+		if ( in_array( $item['status'], array( 'failed', 'queued' ), true ) && ! empty( $item['payload'] ) ) {
 			$resend_url = wp_nonce_url(
 				add_query_arg(
 					array(
