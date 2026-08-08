@@ -54,8 +54,12 @@ class Euromail_Activator {
 
 	/**
 	 * Create (or upgrade) the {$wpdb->prefix}euromail_log table via dbDelta().
+	 * Public: also called by Euromail_Plugin's runtime migration guard for
+	 * a site updated in place (no deactivate/reactivate cycle), not only
+	 * from activate(). dbDelta() only adds what's missing, so calling it
+	 * again on an already-current table is a safe no-op.
 	 */
-	private static function create_log_table() {
+	public static function create_log_table() {
 		global $wpdb;
 
 		$table_name      = $wpdb->prefix . 'euromail_log';
