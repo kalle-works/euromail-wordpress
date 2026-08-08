@@ -46,13 +46,12 @@ class Euromail_Mailer {
 
 		$idempotency_key = wp_generate_uuid4();
 
-		// Stored WITH attachment content while the row is non-terminal
-		// (sending/queued): a later retry needs the actual bytes, since the
-		// original request's temp attachment files are typically gone by
-		// then. Content is stripped once the row reaches a terminal state
-		// (see the 'sent' branch below and Euromail_Queue's 'sent' update);
-		// a 'failed' row deliberately keeps its content too, so it can be
-		// resent from the admin log table.
+		// Attachment content is never stored in the log: Euromail_Queue
+		// re-reads a retry's attachments from their source 'path' instead
+		// (see redact_payload_for_storage()) — the original request's temp
+		// files may or may not still exist by then, and a missing one is
+		// reported as a named, permanent failure rather than silently
+		// stored as a multi-megabyte blob.
 		$log_id = Euromail_Logger::create(
 			array(
 				'status'          => 'sending',
@@ -60,7 +59,7 @@ class Euromail_Mailer {
 				'mail_from'       => $email['from'],
 				'mail_to'         => implode( ', ', $email['to'] ),
 				'subject'         => $email['subject'],
-				'payload'         => wp_json_encode( $email ),
+				'payload'         => wp_json_encode( self::redact_payload_for_storage( $email ) ),
 			)
 		);
 
@@ -89,7 +88,7 @@ class Euromail_Mailer {
 			$this->update_log(
 				$log_id,
 				array(
-					'status'          => 'queued',
+					'status'          => 'retrying',
 					'error'           => $result['error'],
 					'attempts'        => 1,
 					'next_attempt_at' => gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) + Euromail_Queue::BACKOFF_SECONDS[0] ), // phpcs:ignore WordPress.DateTime.CurrentTimeTimestamp.Requested
@@ -118,7 +117,7 @@ class Euromail_Mailer {
 	 * selection and error classification.
 	 *
 	 * @param array  $email           Canonical email array.
-	 * @param string $idempotency_key Idempotency key (reused as-is across retries).
+	 * @param string $idempotency_key Idempotency key (reused as-is across automatic retries).
 	 * @return array{success: bool, backend: string|null, message_id: string|null, retryable: bool, error: string, retry_after: int|null}
 	 */
 	public function attempt_send( array $email, $idempotency_key ) {
@@ -178,12 +177,16 @@ class Euromail_Mailer {
 	 * @return bool
 	 */
 	public static function is_retryable_exception( Throwable $e ) {
-		if ( EUROMAIL_SDK_LOADED && $e instanceof EuroMail\Exceptions\EuroMailException ) {
-			return $e->isRetryable();
+		if ( $e instanceof Euromail_Retryable_Exception ) {
+			return true;
 		}
 
-		if ( $e instanceof Euromail_Smtp_Exception ) {
-			return $e->is_retryable();
+		if ( $e instanceof Euromail_Permanent_Exception ) {
+			return false;
+		}
+
+		if ( EUROMAIL_SDK_LOADED && $e instanceof EuroMail\Exceptions\EuroMailException ) {
+			return $e->isRetryable();
 		}
 
 		// Unknown Throwable: default to retryable. A spurious retry costs
@@ -221,9 +224,10 @@ class Euromail_Mailer {
 
 	/**
 	 * Strip attachment content (base64) from a canonical email before it is
-	 * stored for a successfully-sent, audited row. Attachment bytes never
-	 * linger in the database once a send has actually succeeded; filename/
-	 * content_type/path/size are kept for reference.
+	 * ever stored. Attachment bytes never touch the database, at any row
+	 * status: Euromail_Queue re-reads them from their source 'path' at
+	 * retry time instead, and a resend goes through the same path.
+	 * filename/content_type/path/size are kept.
 	 *
 	 * @param array $email Canonical email array.
 	 * @return array
@@ -272,8 +276,9 @@ class Euromail_Mailer {
 	 * 'smtp'); when `euromail_fallback_enabled` is on and the other backend
 	 * is configured, it's appended as a second attempt.
 	 *
-	 * Filterable via `euromail_backends` so tests can inject fakes without
-	 * touching this class.
+	 * Filterable via `euromail_backends` so tests — and the Send Test
+	 * page's backend-override radio — can inject or replace the chain
+	 * without touching this class.
 	 *
 	 * @return array<string, object> Backend name => object exposing send( array $email, string $idempotency_key ): array.
 	 */

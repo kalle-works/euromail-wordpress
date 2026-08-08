@@ -8,14 +8,16 @@
  * - A successful backend produces a "sent" log row with the backend name
  *   and message ID, fires wp_mail_succeeded, and wp_mail() returns true.
  * - A failure classified retryable (the default for an unrecognized
- *   Throwable) is queued with a next_attempt_at in the near future, keeps
- *   its full payload (attachment content included) so the queue can retry
- *   it, and still fires wp_mail_failed / returns false synchronously.
- * - A failure classified permanent (or with retries already exhausted) is
- *   marked failed immediately, and — deliberately, so the admin log table
- *   can offer Resend — also keeps its full payload regardless of
- *   euromail_store_body. Only a *successful* send's stored payload
- *   respects euromail_store_body.
+ *   Throwable, or Euromail_Retryable_Exception) is put in status
+ *   'retrying' with a next_attempt_at in the near future, and still fires
+ *   wp_mail_failed / returns false synchronously — we don't yet know
+ *   whether the background retry will succeed.
+ * - A failure classified permanent (Euromail_Permanent_Exception, or
+ *   retries already exhausted) is marked failed immediately.
+ * - The stored payload NEVER contains attachment content, at any status:
+ *   a retry or a resend re-reads attachments from their source 'path'
+ *   instead (Euromail_Queue's job). A successful send's stored payload
+ *   additionally respects euromail_store_body (null unless it's on).
  * - Any Throwable a backend raises (not just Exception) is caught: wp_mail()
  *   never fatals.
  * - The backend chain reflects euromail_backend (primary) and
@@ -50,10 +52,11 @@ class Euromail_Test_Fake_Backend {
 	/**
 	 * @param Throwable $exception Anything the backend should raise —
 	 *                             Exception and Error both qualify. Use
-	 *                             Euromail_Smtp_Exception(..., false) to
-	 *                             simulate a permanent (non-retryable)
-	 *                             failure; a plain Exception/Error is
-	 *                             treated as retryable by default.
+	 *                             Euromail_Permanent_Exception to simulate
+	 *                             a non-retryable failure,
+	 *                             Euromail_Retryable_Exception (or a plain
+	 *                             Exception/Error, which defaults to
+	 *                             retryable) for a transient one.
 	 */
 	public static function failing( Throwable $exception ) {
 		$backend            = new self();
@@ -171,7 +174,7 @@ class Test_Euromail_Mailer extends WP_UnitTestCase {
 		add_filter(
 			'euromail_backends',
 			function () {
-				return array( 'fake' => Euromail_Test_Fake_Backend::failing( new Euromail_Smtp_Exception( 'boom', false ) ) );
+				return array( 'fake' => Euromail_Test_Fake_Backend::failing( new Euromail_Permanent_Exception( 'boom' ) ) );
 			}
 		);
 
@@ -198,15 +201,13 @@ class Test_Euromail_Mailer extends WP_UnitTestCase {
 		$this->assertSame( 'euromail_send_failed', $captured_error->get_error_code() );
 	}
 
-	public function test_retryable_failure_is_queued_with_backoff_and_still_fires_wp_mail_failed() {
+	public function test_retryable_failure_is_put_in_retrying_status_with_backoff_and_still_fires_wp_mail_failed() {
 		update_option( 'euromail_api_key', 'em_live_test' );
 
 		add_filter(
 			'euromail_backends',
 			function () {
-				// A plain Exception is not a recognized SDK/SMTP exception
-				// type, so it's treated as retryable by default.
-				return array( 'fake' => Euromail_Test_Fake_Backend::failing( new Exception( 'temporary boom' ) ) );
+				return array( 'fake' => Euromail_Test_Fake_Backend::failing( new Euromail_Retryable_Exception( 'temporary boom' ) ) );
 			}
 		);
 
@@ -226,7 +227,7 @@ class Test_Euromail_Mailer extends WP_UnitTestCase {
 		$this->assertTrue( $fired, 'wp_mail_failed must still fire on the initial attempt, even though a retry is queued.' );
 
 		$row = $this->latest_log_row();
-		$this->assertSame( 'queued', $row['status'] );
+		$this->assertSame( 'retrying', $row['status'] );
 		$this->assertSame( 1, (int) $row['attempts'] );
 		$this->assertNotNull( $row['next_attempt_at'] );
 
@@ -252,23 +253,23 @@ class Test_Euromail_Mailer extends WP_UnitTestCase {
 		$row = $this->latest_log_row();
 		$this->assertNotNull( $row );
 		// An unrecognized Throwable (including Error) defaults to
-		// retryable, so this is queued rather than immediately failed —
-		// the key guarantee is simply that it was caught and logged, not
-		// left to fatal.
-		$this->assertSame( 'queued', $row['status'] );
+		// retryable, so this ends up 'retrying' rather than immediately
+		// failed — the key guarantee is simply that it was caught and
+		// logged, not left to fatal.
+		$this->assertSame( 'retrying', $row['status'] );
 		$this->assertStringContainsString( 'fatal-ish error', $row['error'] );
 	}
 
-	public function test_failed_send_retains_full_payload_regardless_of_store_body_for_resend() {
+	public function test_stored_payload_never_contains_attachment_content_regardless_of_status() {
 		update_option( 'euromail_api_key', 'em_live_test' );
-		update_option( 'euromail_store_body', false );
+		update_option( 'euromail_store_body', true ); // even with store_body ON
 
 		$path = $this->make_temp_file( 'attachment bytes' );
 
 		add_filter(
 			'euromail_backends',
 			function () {
-				return array( 'fake' => Euromail_Test_Fake_Backend::failing( new Euromail_Smtp_Exception( 'boom', false ) ) );
+				return array( 'fake' => Euromail_Test_Fake_Backend::failing( new Euromail_Permanent_Exception( 'boom' ) ) );
 			}
 		);
 
@@ -276,27 +277,27 @@ class Test_Euromail_Mailer extends WP_UnitTestCase {
 
 		$row = $this->latest_log_row();
 		$this->assertSame( 'failed', $row['status'] );
-		$this->assertNotNull( $row['payload'], 'A failed row must keep its payload so it can be resent from the admin log table.' );
+		$this->assertNotNull( $row['payload'], 'A failed row must keep its payload metadata so it can be resent from the admin log table.' );
 
 		$payload = json_decode( $row['payload'], true );
-		$this->assertArrayHasKey( 'content', $payload['attachments'][0], 'The retained payload must include attachment content, or a resend could not actually attach the file.' );
+		$this->assertArrayNotHasKey( 'content', $payload['attachments'][0], 'Attachment content must never be stored, at any status — a resend re-reads it from disk.' );
+		$this->assertSame( $path, $payload['attachments'][0]['path'], 'The path must be retained so a retry/resend can re-read the file.' );
 	}
 
-	public function test_queued_send_retains_full_payload_for_the_retry_queue() {
+	public function test_retrying_send_retains_payload_metadata_for_the_retry_queue() {
 		update_option( 'euromail_api_key', 'em_live_test' );
-		update_option( 'euromail_store_body', false );
 
 		add_filter(
 			'euromail_backends',
 			function () {
-				return array( 'fake' => Euromail_Test_Fake_Backend::failing( new Exception( 'temporary boom' ) ) );
+				return array( 'fake' => Euromail_Test_Fake_Backend::failing( new Euromail_Retryable_Exception( 'temporary boom' ) ) );
 			}
 		);
 
 		wp_mail( 'recipient@example.com', 'Hello', 'Body text' );
 
 		$row = $this->latest_log_row();
-		$this->assertSame( 'queued', $row['status'] );
+		$this->assertSame( 'retrying', $row['status'] );
 		$this->assertNotNull( $row['payload'] );
 	}
 
@@ -499,14 +500,14 @@ class Test_Euromail_Mailer extends WP_UnitTestCase {
 		$this->assertSame( array( 'api' ), $seen_keys );
 	}
 
-	public function test_fallback_backend_is_tried_when_the_primary_fails() {
+	public function test_fallback_backend_is_tried_when_the_primary_fails_permanently() {
 		update_option( 'euromail_api_key', 'em_live_test' );
 
 		add_filter(
 			'euromail_backends',
 			function () {
 				return array(
-					'api'  => Euromail_Test_Fake_Backend::failing( new Euromail_Smtp_Exception( 'primary down', false ) ),
+					'api'  => Euromail_Test_Fake_Backend::failing( new Euromail_Permanent_Exception( 'primary down' ) ),
 					'smtp' => Euromail_Test_Fake_Backend::succeeding( 'msg-fallback' ),
 				);
 			}
@@ -520,5 +521,27 @@ class Test_Euromail_Mailer extends WP_UnitTestCase {
 		$this->assertSame( 'sent', $row['status'] );
 		$this->assertSame( 'smtp', $row['backend'] );
 		$this->assertSame( 'msg-fallback', $row['message_id'] );
+	}
+
+	public function test_fallback_backend_is_tried_when_the_primary_fails_retryably() {
+		update_option( 'euromail_api_key', 'em_live_test' );
+
+		add_filter(
+			'euromail_backends',
+			function () {
+				return array(
+					'api'  => Euromail_Test_Fake_Backend::failing( new Euromail_Retryable_Exception( 'primary busy' ) ),
+					'smtp' => Euromail_Test_Fake_Backend::succeeding( 'msg-fallback' ),
+				);
+			}
+		);
+
+		$result = wp_mail( 'recipient@example.com', 'Hello', 'Body text' );
+
+		$this->assertTrue( $result, 'Fallback must be tried on ANY primary failure, retryable or permanent, not only permanent ones.' );
+
+		$row = $this->latest_log_row();
+		$this->assertSame( 'sent', $row['status'] );
+		$this->assertSame( 'smtp', $row['backend'] );
 	}
 }

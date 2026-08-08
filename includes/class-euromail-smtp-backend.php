@@ -24,24 +24,57 @@ use PHPMailer\PHPMailer\Exception as PHPMailerException;
 class Euromail_Smtp_Backend {
 
 	/**
+	 * Builds the PHPMailer instance used by send(). Defaults to a real one;
+	 * tests can inject a factory returning a PHPMailer subclass whose
+	 * postSend() is overridden to skip the network, so the canonical-email
+	 * mapping and error classification are unit-testable without opening
+	 * real sockets.
+	 *
+	 * @var callable|null
+	 */
+	private $mailer_factory;
+
+	/**
+	 * @param callable|null $mailer_factory Optional `function(): PHPMailer` override, for tests.
+	 */
+	public function __construct( $mailer_factory = null ) {
+		$this->mailer_factory = $mailer_factory;
+	}
+
+	/**
 	 * Send a canonical email via SMTP.
 	 *
 	 * @param array  $email           Canonical email array, see Euromail_Email_Normalizer::normalize().
 	 * @param string $idempotency_key Unused by SMTP (no server-side dedup); kept for interface parity with Euromail_Api_Backend.
 	 * @return array{message_id: string|null}
-	 * @throws Euromail_Smtp_Exception On any SMTP/transport failure, classified retryable or not.
+	 * @throws Euromail_Retryable_Exception On a transient failure worth retrying.
+	 * @throws Euromail_Permanent_Exception On a failure retrying will not fix.
 	 */
 	public function send( array $email, $idempotency_key ) {
-		$mail = new PHPMailer( true );
+		$mail = null !== $this->mailer_factory ? call_user_func( $this->mailer_factory ) : new PHPMailer( true );
 
 		try {
 			$this->configure_transport( $mail );
 			$this->configure_message( $mail, $email );
+
+			/**
+			 * Fires right before the SMTP send, with a reference to the
+			 * PHPMailer instance — same hook and timing as core wp_mail(),
+			 * for compatibility with plugins that already use it.
+			 *
+			 * @param PHPMailer $mail PHPMailer instance.
+			 */
+			do_action_ref_array( 'phpmailer_init', array( &$mail ) );
+
 			$mail->send();
 		} catch ( PHPMailerException $e ) {
 			$message = '' !== $mail->ErrorInfo ? $mail->ErrorInfo : $e->getMessage();
 
-			throw new Euromail_Smtp_Exception( $message, self::is_retryable_message( $message ) );
+			if ( self::is_retryable_message( $message ) ) {
+				throw new Euromail_Retryable_Exception( $message );
+			}
+
+			throw new Euromail_Permanent_Exception( $message );
 		}
 
 		return array(
@@ -112,6 +145,26 @@ class Euromail_Smtp_Backend {
 		}
 
 		foreach ( $email['attachments'] as $attachment ) {
+			$this->add_attachment( $mail, $attachment );
+		}
+	}
+
+	/**
+	 * Attach a single canonical attachment, reading straight from its
+	 * source 'path' when that file still exists (avoiding an unnecessary
+	 * base64 decode/encode round-trip), falling back to the already
+	 * base64-encoded 'content' otherwise.
+	 *
+	 * @param PHPMailer $mail       PHPMailer instance.
+	 * @param array     $attachment Canonical attachment: filename, content_type, and 'path' and/or 'content'.
+	 */
+	private function add_attachment( PHPMailer $mail, array $attachment ) {
+		if ( ! empty( $attachment['path'] ) && file_exists( $attachment['path'] ) ) {
+			$mail->addAttachment( $attachment['path'], $attachment['filename'], PHPMailer::ENCODING_BASE64, $attachment['content_type'] );
+			return;
+		}
+
+		if ( ! empty( $attachment['content'] ) ) {
 			$mail->addStringAttachment(
 				base64_decode( $attachment['content'] ), // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
 				$attachment['filename'],
