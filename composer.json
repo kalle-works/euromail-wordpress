@@ -23,13 +23,6 @@
     },
     "repositories": [
         {
-            "type": "path",
-            "url": "../euromail-php",
-            "options": {
-                "symlink": false
-            }
-        },
-        {
             "type": "vcs",
             "url": "https://github.com/kalle-works/euromail-php"
         }
