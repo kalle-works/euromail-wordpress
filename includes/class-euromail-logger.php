@@ -101,4 +101,66 @@ class Euromail_Logger {
 
 		return $row ? $row : null;
 	}
+
+	/**
+	 * Permanently delete a log row.
+	 *
+	 * @param int $id Row ID.
+	 * @return bool
+	 */
+	public static function delete( $id ) {
+		global $wpdb;
+
+		return false !== $wpdb->delete( self::table_name(), array( 'id' => (int) $id ), array( '%d' ) );
+	}
+
+	/**
+	 * IDs of queued rows due for a retry attempt, oldest-due first.
+	 *
+	 * @param int    $limit Maximum number of IDs to return.
+	 * @param string $now   MySQL datetime to compare against; defaults to now.
+	 * @return int[]
+	 */
+	public static function due_queue_ids( $limit, $now = null ) {
+		global $wpdb;
+
+		if ( null === $now ) {
+			$now = current_time( 'mysql' );
+		}
+
+		$ids = $wpdb->get_col(
+			$wpdb->prepare(
+				'SELECT id FROM ' . self::table_name() . ' WHERE status = %s AND next_attempt_at <= %s ORDER BY next_attempt_at ASC LIMIT %d',
+				'queued',
+				$now,
+				(int) $limit
+			)
+		);
+
+		return array_map( 'intval', $ids );
+	}
+
+	/**
+	 * Atomically claim a queued row for processing by flipping its status
+	 * to 'sending'. Only one concurrent caller can win this for a given
+	 * row: the UPDATE only matches rows still in 'queued' status, so a
+	 * second caller (an overlapping cron run, a manual `wp cron event run`
+	 * racing the schedule, etc.) affects zero rows and knows to back off.
+	 *
+	 * @param int $id Row ID.
+	 * @return bool True if this call claimed the row.
+	 */
+	public static function claim_for_retry( $id ) {
+		global $wpdb;
+
+		$affected = $wpdb->query(
+			$wpdb->prepare(
+				'UPDATE ' . self::table_name() . " SET status = 'sending', updated_at = %s WHERE id = %d AND status = 'queued'",
+				current_time( 'mysql' ),
+				(int) $id
+			)
+		);
+
+		return 1 === $affected;
+	}
 }
