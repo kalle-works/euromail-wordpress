@@ -28,6 +28,7 @@ class Euromail_Activator {
 		self::create_log_table();
 		update_option( 'euromail_db_version', self::DB_VERSION );
 		self::schedule_retention_pruning();
+		self::schedule_retry_queue();
 	}
 
 	/**
@@ -36,6 +37,18 @@ class Euromail_Activator {
 	private static function schedule_retention_pruning() {
 		if ( ! wp_next_scheduled( 'euromail_prune_logs' ) ) {
 			wp_schedule_event( time(), 'daily', 'euromail_prune_logs' );
+		}
+	}
+
+	/**
+	 * Schedule the retry-queue cron event, if not already scheduled. The
+	 * euromail_minutely schedule itself is registered unconditionally in
+	 * the main plugin file, not here, so it's always available by the time
+	 * this runs.
+	 */
+	private static function schedule_retry_queue() {
+		if ( ! wp_next_scheduled( 'euromail_process_retry_queue' ) ) {
+			wp_schedule_event( time(), 'euromail_minutely', 'euromail_process_retry_queue' );
 		}
 	}
 

@@ -10,9 +10,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Clears scheduled cron events. The retry queue itself ships in a later
- * milestone, but the hook name is reserved here so activation/deactivation
- * stay symmetric once it exists.
+ * Clears scheduled cron events.
  */
 class Euromail_Deactivator {
 
@@ -20,7 +18,7 @@ class Euromail_Deactivator {
 	 * Deactivation entry point.
 	 */
 	public static function deactivate() {
-		wp_clear_scheduled_hook( 'euromail_retry_failed_emails' );
 		wp_clear_scheduled_hook( 'euromail_prune_logs' );
+		wp_clear_scheduled_hook( 'euromail_process_retry_queue' );
 	}
 }
