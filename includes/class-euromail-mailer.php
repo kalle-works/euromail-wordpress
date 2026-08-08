@@ -46,6 +46,7 @@ class Euromail_Mailer {
 		}
 
 		$idempotency_key = wp_generate_uuid4();
+		$store_body      = (bool) Euromail_Settings::get( 'euromail_store_body' );
 
 		$log_id = Euromail_Logger::create(
 			array(
@@ -54,7 +55,7 @@ class Euromail_Mailer {
 				'mail_from'       => $email['from'],
 				'mail_to'         => implode( ', ', $email['to'] ),
 				'subject'         => $email['subject'],
-				'payload'         => wp_json_encode( $email ),
+				'payload'         => wp_json_encode( $this->redact_payload( $email ) ),
 			)
 		);
 
@@ -64,28 +65,34 @@ class Euromail_Mailer {
 			try {
 				$result = $backend->send( $email, $idempotency_key );
 
-				Euromail_Logger::update(
+				$this->update_log(
 					$log_id,
 					array(
 						'status'     => 'sent',
 						'backend'    => $name,
 						'message_id' => isset( $result['message_id'] ) ? $result['message_id'] : null,
-						'payload'    => Euromail_Settings::get( 'euromail_store_body' ) ? wp_json_encode( $email ) : null,
+						'payload'    => $store_body ? wp_json_encode( $this->redact_payload( $email ) ) : null,
 						'attempts'   => 1,
 					)
 				);
 
+				do_action( 'wp_mail_succeeded', $atts );
+
 				return true;
-			} catch ( Exception $e ) {
+			} catch ( Throwable $e ) {
+				// A backend (or the SDK/HTTP layer beneath it) may throw
+				// anything, including Errors, not just Exceptions. wp_mail()
+				// must never fatal because of it.
 				$last_error = sprintf( '%s: %s %s', $name, $e->getCode(), $e->getMessage() );
 			}
 		}
 
-		Euromail_Logger::update(
+		$this->update_log(
 			$log_id,
 			array(
 				'status'   => 'failed',
 				'error'    => $last_error,
+				'payload'  => $store_body ? wp_json_encode( $this->redact_payload( $email ) ) : null,
 				'attempts' => 1,
 			)
 		);
@@ -93,6 +100,41 @@ class Euromail_Mailer {
 		do_action( 'wp_mail_failed', new WP_Error( 'euromail_send_failed', $last_error ) );
 
 		return false;
+	}
+
+	/**
+	 * Update a log row, skipping gracefully when the initial insert failed
+	 * (log_id 0) instead of trying to update a row that doesn't exist.
+	 *
+	 * @param int   $log_id Row ID returned by Euromail_Logger::create().
+	 * @param array $data   Column values to change.
+	 */
+	private function update_log( $log_id, array $data ) {
+		if ( $log_id > 0 ) {
+			Euromail_Logger::update( $log_id, $data );
+		}
+	}
+
+	/**
+	 * Strip attachment content (base64) from a canonical email before it is
+	 * stored in the log table. Attachment bytes never touch the database;
+	 * filename/content_type/path/size are kept for debugging.
+	 *
+	 * @param array $email Canonical email array.
+	 * @return array
+	 */
+	private function redact_payload( array $email ) {
+		if ( ! empty( $email['attachments'] ) ) {
+			$email['attachments'] = array_map(
+				function ( $attachment ) {
+					unset( $attachment['content'] );
+					return $attachment;
+				},
+				$email['attachments']
+			);
+		}
+
+		return $email;
 	}
 
 	/**
