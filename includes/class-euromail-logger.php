@@ -29,7 +29,9 @@ class Euromail_Logger {
 	 * Insert a new log row.
 	 *
 	 * @param array $data Column values. Any column not provided falls back to its default.
-	 * @return int Inserted row ID, or 0 on failure.
+	 * @return int Inserted row ID, or 0 on failure. Never trust a stale
+	 *              $wpdb->insert_id from a previous successful insert in the
+	 *              same request; the insert's own return value is checked.
 	 */
 	public static function create( array $data ) {
 		global $wpdb;
@@ -55,24 +57,32 @@ class Euromail_Logger {
 
 		$row = array_merge( $defaults, $data );
 
-		$wpdb->insert( self::table_name(), $row );
+		$inserted = $wpdb->insert( self::table_name(), $row );
 
-		return (int) $wpdb->insert_id;
+		return $inserted ? (int) $wpdb->insert_id : 0;
 	}
 
 	/**
-	 * Update an existing log row. Always bumps updated_at.
+	 * Update an existing log row. Always bumps updated_at. A no-op (never
+	 * touches the database) for id 0, since that means the row was never
+	 * created in the first place.
 	 *
 	 * @param int   $id   Row ID.
 	 * @param array $data Column values to change.
 	 * @return bool
 	 */
 	public static function update( $id, array $data ) {
+		$id = (int) $id;
+
+		if ( $id <= 0 ) {
+			return false;
+		}
+
 		global $wpdb;
 
 		$data['updated_at'] = current_time( 'mysql' );
 
-		return false !== $wpdb->update( self::table_name(), $data, array( 'id' => (int) $id ) );
+		return false !== $wpdb->update( self::table_name(), $data, array( 'id' => $id ) );
 	}
 
 	/**
