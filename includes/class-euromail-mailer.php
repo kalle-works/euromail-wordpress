@@ -74,6 +74,7 @@ class Euromail_Mailer {
 				array(
 					'backend'    => $result['backend'],
 					'message_id' => $result['message_id'],
+					'api_id'     => $result['api_id'],
 					'attempts'   => 1,
 				)
 			);
@@ -128,6 +129,7 @@ class Euromail_Mailer {
 				'success'     => false,
 				'backend'     => null,
 				'message_id'  => null,
+				'api_id'      => null,
 				'retryable'   => true,
 				'error'       => 'no backend configured',
 				'retry_after' => null,
@@ -146,6 +148,9 @@ class Euromail_Mailer {
 					'success'     => true,
 					'backend'     => $name,
 					'message_id'  => isset( $result['message_id'] ) ? $result['message_id'] : null,
+					// Only the API backend's SentEmail carries a distinct
+					// API id (SMTP has no such concept); absent for SMTP.
+					'api_id'      => isset( $result['api_id'] ) ? $result['api_id'] : null,
 					'retryable'   => false,
 					'error'       => '',
 					'retry_after' => null,
@@ -175,6 +180,7 @@ class Euromail_Mailer {
 			'success'     => false,
 			'backend'     => null,
 			'message_id'  => null,
+			'api_id'      => null,
 			'retryable'   => $any_retryable,
 			'error'       => $last_error,
 			'retry_after' => $retry_after,

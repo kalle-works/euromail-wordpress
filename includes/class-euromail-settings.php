@@ -41,6 +41,7 @@ class Euromail_Settings {
 		'euromail_smtp_auth'                => true,
 		'euromail_smtp_username'            => '',
 		'euromail_smtp_password'            => '',
+		'euromail_webhook_secret'           => '',
 	);
 
 	/**
@@ -49,9 +50,10 @@ class Euromail_Settings {
 	 * @var array
 	 */
 	const CONSTANT_OVERRIDES = array(
-		'euromail_api_key'       => 'EUROMAIL_API_KEY',
-		'euromail_api_base_url'  => 'EUROMAIL_API_BASE_URL',
-		'euromail_smtp_password' => 'EUROMAIL_SMTP_PASSWORD',
+		'euromail_api_key'        => 'EUROMAIL_API_KEY',
+		'euromail_api_base_url'   => 'EUROMAIL_API_BASE_URL',
+		'euromail_smtp_password'  => 'EUROMAIL_SMTP_PASSWORD',
+		'euromail_webhook_secret' => 'EUROMAIL_WEBHOOK_SECRET',
 	);
 
 	/**

@@ -44,6 +44,7 @@ class Euromail_Logger {
 			'status'          => 'sending',
 			'backend'         => null,
 			'message_id'      => null,
+			'api_id'          => null,
 			'idempotency_key' => wp_generate_uuid4(),
 			'mail_from'       => '',
 			'mail_to'         => '',
@@ -112,6 +113,29 @@ class Euromail_Logger {
 		global $wpdb;
 
 		return false !== $wpdb->delete( self::table_name(), array( 'id' => (int) $id ), array( '%d' ) );
+	}
+
+	/**
+	 * Fetch a single log row by the euromail.dev API's own id for the send
+	 * (SentEmail::$id — distinct from message_id) — how a webhook event
+	 * identifies which email it belongs to.
+	 *
+	 * @param string $api_id API id.
+	 * @return array|null
+	 */
+	public static function get_by_api_id( $api_id ) {
+		global $wpdb;
+
+		if ( '' === (string) $api_id ) {
+			return null;
+		}
+
+		$row = $wpdb->get_row(
+			$wpdb->prepare( 'SELECT * FROM ' . self::table_name() . ' WHERE api_id = %s LIMIT 1', (string) $api_id ),
+			ARRAY_A
+		);
+
+		return $row ? $row : null;
 	}
 
 	/**
