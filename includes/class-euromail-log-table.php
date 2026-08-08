@@ -280,14 +280,18 @@ class Euromail_Log_Table extends WP_List_Table {
 	}
 
 	/**
-	 * Handle the bulk "Delete" action.
+	 * Handle the bulk "Delete" action. The surrounding form on the Log
+	 * page uses method="get" (it doubles as the search/status-filter
+	 * form), so the checked row IDs and bulk-action nonce arrive in
+	 * $_GET, not $_POST — reading only $_POST here meant this action
+	 * never actually deleted anything. $_REQUEST covers both.
 	 */
 	private function process_bulk_delete() {
 		if ( 'delete' !== $this->current_action() ) {
 			return;
 		}
 
-		if ( empty( $_POST['log'] ) || ! is_array( $_POST['log'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		if ( empty( $_REQUEST['log'] ) || ! is_array( $_REQUEST['log'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
 			return;
 		}
 
@@ -297,7 +301,7 @@ class Euromail_Log_Table extends WP_List_Table {
 			return;
 		}
 
-		foreach ( wp_unslash( $_POST['log'] ) as $id ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.MissingUnslash
+		foreach ( wp_unslash( $_REQUEST['log'] ) as $id ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.MissingUnslash
 			Euromail_Logger::delete( absint( $id ) );
 		}
 	}

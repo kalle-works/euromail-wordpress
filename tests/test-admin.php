@@ -299,6 +299,43 @@ class Test_Euromail_Admin_Log_Row_Actions extends WP_UnitTestCase {
 		$this->assertSame( 'failed', $row['status'], 'A resend that never had a payload to work with must not touch the row.' );
 	}
 
+	public function test_resend_of_an_already_sent_row_is_refused_and_the_row_is_unchanged() {
+		$id = $this->insert_row(
+			array(
+				'status'     => 'sent',
+				'backend'    => 'api',
+				'message_id' => 'msg-already-delivered',
+				'attempts'   => 1,
+			)
+		);
+		$original_row = Euromail_Logger::get( $id );
+
+		add_filter(
+			'euromail_backends',
+			function () {
+				return array( 'fake' => Euromail_Test_Fake_Backend::succeeding( 'msg-should-not-happen' ) );
+			}
+		);
+
+		$notice = $this->admin->process_log_row_action( 'resend', $id );
+
+		$this->assertSame( 'resend_not_allowed', $notice );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertSame( $original_row, $row, 'A resend of an already-sent row must refuse and leave every column exactly as it was.' );
+	}
+
+	public function test_resend_of_a_row_currently_sending_is_refused() {
+		$id = $this->insert_row( array( 'status' => 'sending' ) );
+
+		$notice = $this->admin->process_log_row_action( 'resend', $id );
+
+		$this->assertSame( 'resend_not_allowed', $notice );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertSame( 'sending', $row['status'], 'A row actively being sent elsewhere must not be resent concurrently.' );
+	}
+
 	public function test_resend_action_that_succeeds_immediately_returns_resent_and_marks_the_row_sent() {
 		$id = $this->insert_row( array( 'attempts' => 3 ) );
 

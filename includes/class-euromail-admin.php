@@ -792,6 +792,7 @@ class Euromail_Admin {
 			'resend_queued'             => array( 'success', __( 'Resend queued; it will retry automatically if it does not go out immediately.', 'euromail' ) ),
 			'resend_failed'             => array( 'error', __( 'Could not resend this email — it has no stored payload to resend.', 'euromail' ) ),
 			'resend_missing_attachment' => array( 'error', __( 'Could not resend this email — attachment "%s" no longer exists and cannot be resent.', 'euromail' ) ),
+			'resend_not_allowed'        => array( 'error', __( 'Could not resend this email — it has already been delivered or is currently in progress.', 'euromail' ) ),
 		);
 
 		if ( ! isset( $messages[ $notice ] ) ) {
@@ -851,7 +852,7 @@ class Euromail_Admin {
 	 *
 	 * @param string $action 'resend' or 'delete'.
 	 * @param int    $id     Log row ID.
-	 * @return string Notice key: 'deleted', 'resent', 'resend_queued', 'resend_failed', or 'resend_missing_attachment'.
+	 * @return string Notice key: 'deleted', 'resent', 'resend_queued', 'resend_failed', 'resend_missing_attachment', or 'resend_not_allowed'.
 	 */
 	public function process_log_row_action( $action, $id ) {
 		if ( 'delete' === $action ) {
@@ -878,14 +879,29 @@ class Euromail_Admin {
 	 * refused outright — never silently sent without the attachment.
 	 *
 	 * @param int $id Log row ID.
-	 * @return string Notice key: 'resent', 'resend_queued', 'resend_failed', or 'resend_missing_attachment'.
+	 * @return string Notice key: 'resent', 'resend_queued', 'resend_failed', 'resend_missing_attachment', or 'resend_not_allowed'.
 	 */
 	private function resend_log_row( $id ) {
 		$this->last_resend_missing_attachment = null;
 
 		$row = Euromail_Logger::get( $id );
 
-		if ( ! $row || empty( $row['payload'] ) ) {
+		if ( ! $row ) {
+			return 'resend_failed';
+		}
+
+		// A stale link, a double-submitted request, or a race with the
+		// cron worker could point this at a row that has already been
+		// delivered ('sent') or is actively being processed ('sending')
+		// elsewhere — resending either would risk a duplicate send or
+		// stepping on an in-flight attempt. Only a row that is actually
+		// done failing ('failed') or already waiting for its own retry
+		// ('queued') is a valid resend target.
+		if ( ! in_array( $row['status'], array( 'failed', 'queued' ), true ) ) {
+			return 'resend_not_allowed';
+		}
+
+		if ( empty( $row['payload'] ) ) {
 			return 'resend_failed';
 		}
 
