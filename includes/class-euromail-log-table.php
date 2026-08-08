@@ -20,6 +20,13 @@ class Euromail_Log_Table extends WP_List_Table {
 	 */
 	const PER_PAGE = 20;
 
+	/**
+	 * Every status a row can be in, for the status filter views.
+	 *
+	 * @var string[]
+	 */
+	const STATUSES = array( 'sending', 'sent', 'retrying', 'failed' );
+
 	public function __construct() {
 		parent::__construct(
 			array(
@@ -76,6 +83,50 @@ class Euromail_Log_Table extends WP_List_Table {
 	}
 
 	/**
+	 * "All | Sending | Sent | Retrying | Failed" filter links above the
+	 * table, each showing that status's row count — the same convention
+	 * WP core's own list tables (Posts, Plugins, ...) use.
+	 *
+	 * @return array<string,string>
+	 */
+	protected function get_views() {
+		global $wpdb;
+		$table = Euromail_Logger::table_name();
+
+		$current_status = isset( $_REQUEST['status'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['status'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+
+		$base_url = remove_query_arg( array( 'status', 'paged' ) );
+
+		$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
+
+		$views = array(
+			'all' => sprintf(
+				'<a href="%s"%s>%s</a>',
+				esc_url( $base_url ),
+				'' === $current_status ? ' class="current"' : '',
+				sprintf( '%s <span class="count">(%d)</span>', esc_html__( 'All', 'euromail' ), $total )
+			),
+		);
+
+		foreach ( self::STATUSES as $status ) {
+			$count = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE status = %s", $status ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+
+			if ( 0 === $count ) {
+				continue;
+			}
+
+			$views[ $status ] = sprintf(
+				'<a href="%s"%s>%s</a>',
+				esc_url( add_query_arg( 'status', $status, $base_url ) ),
+				$current_status === $status ? ' class="current"' : '',
+				sprintf( '%s <span class="count">(%d)</span>', esc_html( ucfirst( $status ) ), $count )
+			);
+		}
+
+		return $views;
+	}
+
+	/**
 	 * @param array $item Row.
 	 * @return string
 	 */
@@ -96,7 +147,18 @@ class Euromail_Log_Table extends WP_List_Table {
 		$nonce_action = 'euromail_log_action_' . $item['id'];
 		$actions      = array();
 
-		if ( in_array( $item['status'], array( 'failed', 'queued' ), true ) && ! empty( $item['payload'] ) ) {
+		$view_url = add_query_arg(
+			array(
+				'page'   => 'euromail-log',
+				'action' => 'view',
+				'id'     => $item['id'],
+			),
+			admin_url( 'admin.php' )
+		);
+
+		$actions['view'] = sprintf( '<a href="%s">%s</a>', esc_url( $view_url ), esc_html__( 'View', 'euromail' ) );
+
+		if ( in_array( $item['status'], array( 'failed', 'retrying' ), true ) && ! empty( $item['payload'] ) ) {
 			$resend_url = wp_nonce_url(
 				add_query_arg(
 					array(
@@ -177,6 +239,13 @@ class Euromail_Log_Table extends WP_List_Table {
 			$where[]        = '(mail_to LIKE %s OR subject LIKE %s)';
 			$where_values[] = $like;
 			$where_values[] = $like;
+		}
+
+		$status_filter = isset( $_REQUEST['status'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['status'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+
+		if ( in_array( $status_filter, self::STATUSES, true ) ) {
+			$where[]        = 'status = %s';
+			$where_values[] = $status_filter;
 		}
 
 		$where_sql = $where ? ( 'WHERE ' . implode( ' AND ', $where ) ) : '';

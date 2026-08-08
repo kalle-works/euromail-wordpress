@@ -310,14 +310,32 @@ class Test_Euromail_Admin_Log_Row_Actions extends WP_UnitTestCase {
 
 		$notice = $this->admin->process_log_row_action( 'resend', $id );
 
-		// A retryable failure on attempt 1 of a fresh budget is queued, not
-		// immediately failed — proving attempts really was reset to 0,
-		// since the row started at MAX_ATTEMPTS (which would have gone
-		// straight to 'failed' otherwise).
+		// A retryable failure on attempt 1 of a fresh budget is put into
+		// 'retrying', not immediately failed — proving attempts really was
+		// reset to 0, since the row started at MAX_ATTEMPTS (which would
+		// have gone straight to 'failed' otherwise).
 		$this->assertSame( 'resend_queued', $notice );
 
 		$row = Euromail_Logger::get( $id );
-		$this->assertSame( 'queued', $row['status'] );
+		$this->assertSame( 'retrying', $row['status'] );
 		$this->assertSame( 1, (int) $row['attempts'] );
+	}
+
+	public function test_resend_action_assigns_a_fresh_idempotency_key() {
+		$id            = $this->insert_row();
+		$original_row  = Euromail_Logger::get( $id );
+		$original_key  = $original_row['idempotency_key'];
+
+		add_filter(
+			'euromail_backends',
+			function () {
+				return array( 'fake' => Euromail_Test_Fake_Backend::succeeding( 'msg-resend-2' ) );
+			}
+		);
+
+		$this->admin->process_log_row_action( 'resend', $id );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertNotSame( $original_key, $row['idempotency_key'], 'A manual resend is a new send attempt, not a replay of the old one, and must get its own idempotency key.' );
 	}
 }

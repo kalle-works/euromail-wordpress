@@ -553,6 +553,16 @@ class Euromail_Admin {
 							<label><input type="radio" name="euromail_test_format" value="plain" /> <?php esc_html_e( 'Plain text', 'euromail' ); ?></label>
 						</td>
 					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Backend', 'euromail' ); ?></th>
+						<td>
+							<label><input type="radio" name="euromail_test_backend" value="default" checked /> <?php esc_html_e( 'Default (from Settings)', 'euromail' ); ?></label>
+							&nbsp;
+							<label><input type="radio" name="euromail_test_backend" value="api" /> <?php esc_html_e( 'Force API', 'euromail' ); ?></label>
+							&nbsp;
+							<label><input type="radio" name="euromail_test_backend" value="smtp" /> <?php esc_html_e( 'Force SMTP', 'euromail' ); ?></label>
+						</td>
+					</tr>
 				</table>
 
 				<p class="submit">
@@ -597,7 +607,17 @@ class Euromail_Admin {
 			$message = '<p>' . esc_html__( 'This is a test email sent from the Euromail WordPress plugin.', 'euromail' ) . '</p>';
 		}
 
+		$override_filter = $this->build_backend_override_filter();
+
+		if ( null !== $override_filter ) {
+			add_filter( 'euromail_backends', $override_filter );
+		}
+
 		$sent = wp_mail( $to, $subject, $message, $headers );
+
+		if ( null !== $override_filter ) {
+			remove_filter( 'euromail_backends', $override_filter );
+		}
 
 		global $wpdb;
 		$log_id = (int) $wpdb->get_var(
@@ -624,11 +644,44 @@ class Euromail_Admin {
 	}
 
 	/**
+	 * Build a one-off `euromail_backends` filter callback that forces the
+	 * Send Test page's chosen backend, bypassing the normal
+	 * euromail_backend/euromail_fallback_enabled chain for this one send.
+	 * Returns null for the "Default" choice, meaning: don't override,
+	 * behave exactly as a real wp_mail() call would.
+	 *
+	 * @return callable|null
+	 */
+	private function build_backend_override_filter() {
+		$choice = isset( $_POST['euromail_test_backend'] ) ? sanitize_text_field( wp_unslash( $_POST['euromail_test_backend'] ) ) : 'default';
+
+		if ( 'api' === $choice && class_exists( 'Euromail_Api_Backend' ) ) {
+			return function () {
+				return array( 'api' => new Euromail_Api_Backend() );
+			};
+		}
+
+		if ( 'smtp' === $choice && class_exists( 'Euromail_Smtp_Backend' ) ) {
+			return function () {
+				return array( 'smtp' => new Euromail_Smtp_Backend() );
+			};
+		}
+
+		return null;
+	}
+
+	/**
 	 * Render the Log page: a WP_List_Table of delivery attempts, with
-	 * Resend/Delete row actions and a bulk Delete action.
+	 * status filter views, Resend/Delete row actions, and a bulk Delete
+	 * action — or, for `?action=view`, a single row's full detail.
 	 */
 	public function render_log_page() {
 		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		if ( isset( $_GET['action'], $_GET['id'] ) && 'view' === sanitize_text_field( wp_unslash( $_GET['action'] ) ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$this->render_log_detail_page( absint( $_GET['id'] ) );
 			return;
 		}
 
@@ -645,9 +698,65 @@ class Euromail_Admin {
 
 			<form method="get">
 				<input type="hidden" name="page" value="euromail-log" />
+				<?php $table->views(); ?>
 				<?php $table->search_box( __( 'Search', 'euromail' ), 'euromail-log-search' ); ?>
 				<?php $table->display(); ?>
 			</form>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Render the detail view for a single log row: every column, plus a
+	 * readable preview of the stored payload. Read-only — no nonce needed,
+	 * since viewing has no side effects.
+	 *
+	 * Events timeline (webhook delivery/open/click events) arrives in M4;
+	 * the 'events' column is already reserved for it in the schema.
+	 *
+	 * @param int $id Log row ID.
+	 */
+	private function render_log_detail_page( $id ) {
+		$row = Euromail_Logger::get( $id );
+
+		$back_url = admin_url( 'admin.php?page=euromail-log' );
+
+		?>
+		<div class="wrap">
+			<h1><?php esc_html_e( 'Euromail Log Entry', 'euromail' ); ?></h1>
+
+			<p><a href="<?php echo esc_url( $back_url ); ?>">&larr; <?php esc_html_e( 'Back to the log', 'euromail' ); ?></a></p>
+
+			<?php if ( ! $row ) : ?>
+				<div class="notice notice-error"><p><?php esc_html_e( 'This log entry no longer exists.', 'euromail' ); ?></p></div>
+				<?php return; ?>
+			<?php endif; ?>
+
+			<table class="form-table">
+				<tr><th scope="row"><?php esc_html_e( 'ID', 'euromail' ); ?></th><td><?php echo esc_html( $row['id'] ); ?></td></tr>
+				<tr><th scope="row"><?php esc_html_e( 'Status', 'euromail' ); ?></th><td><?php echo esc_html( $row['status'] ); ?></td></tr>
+				<tr><th scope="row"><?php esc_html_e( 'Backend', 'euromail' ); ?></th><td><?php echo esc_html( '' !== (string) $row['backend'] ? $row['backend'] : '—' ); ?></td></tr>
+				<tr><th scope="row"><?php esc_html_e( 'Created', 'euromail' ); ?></th><td><?php echo esc_html( $row['created_at'] ); ?></td></tr>
+				<tr><th scope="row"><?php esc_html_e( 'Updated', 'euromail' ); ?></th><td><?php echo esc_html( $row['updated_at'] ); ?></td></tr>
+				<tr><th scope="row"><?php esc_html_e( 'From', 'euromail' ); ?></th><td><?php echo esc_html( $row['mail_from'] ); ?></td></tr>
+				<tr><th scope="row"><?php esc_html_e( 'To', 'euromail' ); ?></th><td><?php echo esc_html( $row['mail_to'] ); ?></td></tr>
+				<tr><th scope="row"><?php esc_html_e( 'Subject', 'euromail' ); ?></th><td><?php echo esc_html( $row['subject'] ); ?></td></tr>
+				<tr><th scope="row"><?php esc_html_e( 'Attempts', 'euromail' ); ?></th><td><?php echo esc_html( $row['attempts'] ); ?></td></tr>
+				<tr><th scope="row"><?php esc_html_e( 'Next attempt', 'euromail' ); ?></th><td><?php echo esc_html( '' !== (string) $row['next_attempt_at'] ? $row['next_attempt_at'] : '—' ); ?></td></tr>
+				<tr><th scope="row"><?php esc_html_e( 'Message ID', 'euromail' ); ?></th><td><?php echo esc_html( '' !== (string) $row['message_id'] ? $row['message_id'] : '—' ); ?></td></tr>
+				<tr><th scope="row"><?php esc_html_e( 'Idempotency key', 'euromail' ); ?></th><td><code><?php echo esc_html( $row['idempotency_key'] ); ?></code></td></tr>
+				<tr><th scope="row"><?php esc_html_e( 'Error', 'euromail' ); ?></th><td><?php echo esc_html( '' !== (string) $row['error'] ? $row['error'] : '—' ); ?></td></tr>
+				<tr>
+					<th scope="row"><?php esc_html_e( 'Stored payload', 'euromail' ); ?></th>
+					<td>
+						<?php if ( empty( $row['payload'] ) ) : ?>
+							<em><?php esc_html_e( 'Not stored.', 'euromail' ); ?></em>
+						<?php else : ?>
+							<pre style="max-width: 100%; overflow-x: auto; white-space: pre-wrap;"><?php echo esc_html( wp_json_encode( json_decode( $row['payload'], true ), JSON_PRETTY_PRINT ) ); ?></pre>
+						<?php endif; ?>
+					</td>
+				</tr>
+			</table>
 		</div>
 		<?php
 	}
@@ -735,10 +844,11 @@ class Euromail_Admin {
 	}
 
 	/**
-	 * Re-queue a log row for an immediate retry attempt: resets attempts to
-	 * 0 (a manual resend gets a fresh full retry budget) and processes it
-	 * synchronously so the admin gets an immediate result instead of
-	 * waiting for the next cron tick.
+	 * Re-queue a log row for an immediate retry attempt: a fresh
+	 * idempotency key (this is a distinct new send attempt, not the same
+	 * logical send being automatically retried) and a reset attempts
+	 * count (a full new budget), processed synchronously so the admin
+	 * gets an immediate result instead of waiting for the next cron tick.
 	 *
 	 * @param int $id Log row ID.
 	 * @return string Notice key: 'resent', 'resend_queued', or 'resend_failed'.
@@ -753,9 +863,10 @@ class Euromail_Admin {
 		Euromail_Logger::update(
 			$id,
 			array(
-				'status'          => 'queued',
+				'status'          => 'retrying',
 				'attempts'        => 0,
 				'error'           => null,
+				'idempotency_key' => wp_generate_uuid4(),
 				'next_attempt_at' => current_time( 'mysql' ),
 			)
 		);
