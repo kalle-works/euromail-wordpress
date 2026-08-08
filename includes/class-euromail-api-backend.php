@@ -57,10 +57,27 @@ class Euromail_Api_Backend {
 			),
 		);
 
-		foreach ( array( 'cc', 'bcc', 'headers', 'attachments' ) as $key ) {
+		foreach ( array( 'cc', 'bcc', 'headers' ) as $key ) {
 			if ( ! empty( $email[ $key ] ) ) {
 				$params[ $key ] = $email[ $key ];
 			}
+		}
+
+		if ( ! empty( $email['attachments'] ) ) {
+			// The canonical attachment array also carries the local 'path'
+			// and 'size' (for logging); the API only needs filename,
+			// content_type and the base64 content, and the local
+			// filesystem path must never leave the server.
+			$params['attachments'] = array_map(
+				function ( $attachment ) {
+					return array(
+						'filename'     => $attachment['filename'],
+						'content_type' => $attachment['content_type'],
+						'content'      => $attachment['content'],
+					);
+				},
+				$email['attachments']
+			);
 		}
 
 		if ( '' !== $email['reply_to'] ) {
