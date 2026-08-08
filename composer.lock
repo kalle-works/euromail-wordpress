@@ -8,11 +8,11 @@
     "packages": [
         {
             "name": "euromail/euromail-php",
-            "version": "dev-feat/sdk-core",
+            "version": "dev-main",
             "dist": {
                 "type": "path",
                 "url": "../euromail-php",
-                "reference": "fd9e88d6655bc8d7ceaf671de0398c010a7a5a1d"
+                "reference": "32dec72f7e21271e5b603412346498d0d58603eb"
             },
             "require": {
                 "ext-json": "*",
