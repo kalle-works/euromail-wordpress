@@ -69,9 +69,12 @@ test( 'a correctly signed delivered webhook updates the log status and events ti
 	const apiId = await page.locator( 'table.form-table tr', { hasText: 'API ID' } ).locator( 'td' ).innerText();
 	expect( apiId ).not.toBe( '—' );
 
-	// POST a correctly signed "delivered" event for that email.
+	// POST a correctly signed "delivered" event for that email, shaped the
+	// way euromail.dev's own webhook worker actually builds it: "event" for
+	// the event type, "email_id" for the email identifier.
 	const body = JSON.stringify( {
-		id: apiId,
+		event: 'delivered',
+		email_id: apiId,
 		timestamp: '2026-01-01T00:00:00Z',
 	} );
 
