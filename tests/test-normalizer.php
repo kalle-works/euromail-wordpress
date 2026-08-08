@@ -242,4 +242,205 @@ class Test_Euromail_Email_Normalizer extends WP_UnitTestCase {
 
 		$this->assertSame( 'Filtered Name', $email['from_name'] );
 	}
+
+	// -- Force From defense (empty/invalid stored value is ignored) --
+
+	public function test_normalizer_ignores_force_from_when_stored_email_is_invalid() {
+		update_option( 'euromail_force_from_enabled', true );
+		update_option( 'euromail_force_from_email', 'not-an-email' );
+		update_option( 'euromail_force_from_name', 'Force Name' );
+
+		$atts  = $this->base_atts( array( 'headers' => 'From: Header Name <header@example.com>' ) );
+		$email = Euromail_Email_Normalizer::normalize( $atts );
+
+		$this->assertSame( 'header@example.com', $email['from'] );
+		$this->assertSame( 'Header Name', $email['from_name'] );
+	}
+
+	public function test_normalizer_ignores_force_from_when_stored_email_is_empty() {
+		update_option( 'euromail_force_from_enabled', true );
+		update_option( 'euromail_force_from_email', '' );
+
+		$email = Euromail_Email_Normalizer::normalize( $this->base_atts() );
+
+		// Falls through to the filtered default (wordpress@sitename), not an empty From.
+		$this->assertNotSame( '', $email['from'] );
+	}
+
+	// -- wp_mail_from / wp_mail_from_name filter order --
+
+	public function test_wp_mail_from_filter_receives_header_value_and_its_return_wins() {
+		$seen = null;
+		add_filter(
+			'wp_mail_from',
+			function ( $email ) use ( &$seen ) {
+				$seen = $email;
+				return 'filtered@example.com';
+			}
+		);
+
+		$atts   = $this->base_atts( array( 'headers' => 'From: header@example.com' ) );
+		$result = Euromail_Email_Normalizer::normalize( $atts );
+
+		remove_all_filters( 'wp_mail_from' );
+
+		$this->assertSame( 'header@example.com', $seen, 'The filter must see the header value, not the default.' );
+		$this->assertSame( 'filtered@example.com', $result['from'], "The filter's return value must win over the header." );
+	}
+
+	public function test_wp_mail_from_name_filter_receives_header_name_and_its_return_wins() {
+		$seen = null;
+		add_filter(
+			'wp_mail_from_name',
+			function ( $name ) use ( &$seen ) {
+				$seen = $name;
+				return 'Filtered Name';
+			}
+		);
+
+		$atts   = $this->base_atts( array( 'headers' => 'From: Header Name <header@example.com>' ) );
+		$result = Euromail_Email_Normalizer::normalize( $atts );
+
+		remove_all_filters( 'wp_mail_from_name' );
+
+		$this->assertSame( 'Header Name', $seen );
+		$this->assertSame( 'Filtered Name', $result['from_name'] );
+	}
+
+	public function test_force_from_beats_wp_mail_from_filter_too() {
+		update_option( 'euromail_force_from_enabled', true );
+		update_option( 'euromail_force_from_email', 'force@example.com' );
+
+		add_filter(
+			'wp_mail_from',
+			function () {
+				return 'filtered@example.com';
+			}
+		);
+
+		$email = Euromail_Email_Normalizer::normalize( $this->base_atts() );
+
+		remove_all_filters( 'wp_mail_from' );
+
+		$this->assertSame( 'force@example.com', $email['from'] );
+	}
+
+	// -- wp_mail_content_type filter order --
+
+	public function test_wp_mail_content_type_filter_can_add_charset_suffix_and_still_detect_html() {
+		add_filter(
+			'wp_mail_content_type',
+			function () {
+				return 'text/html; charset=UTF-8';
+			}
+		);
+
+		$email = Euromail_Email_Normalizer::normalize( $this->base_atts( array( 'message' => '<p>Hi</p>' ) ) );
+
+		remove_all_filters( 'wp_mail_content_type' );
+
+		$this->assertSame( '<p>Hi</p>', $email['html_body'] );
+		$this->assertArrayNotHasKey( 'text_body', $email );
+	}
+
+	public function test_wp_mail_content_type_filter_sees_header_value_and_its_return_wins() {
+		$seen = null;
+		add_filter(
+			'wp_mail_content_type',
+			function ( $type ) use ( &$seen ) {
+				$seen = $type;
+				return 'text/plain'; // Downgrade despite an HTML header.
+			}
+		);
+
+		$atts  = $this->base_atts( array( 'headers' => 'Content-Type: text/html; charset=UTF-8' ) );
+		$email = Euromail_Email_Normalizer::normalize( $atts );
+
+		remove_all_filters( 'wp_mail_content_type' );
+
+		$this->assertSame( 'text/html', $seen, 'The filter must see the header-derived type.' );
+		$this->assertSame( 'Body text', $email['text_body'] );
+		$this->assertArrayNotHasKey( 'html_body', $email );
+	}
+
+	// -- Charset conversion to UTF-8 --
+
+	public function test_charset_conversion_to_utf8_when_wp_mail_charset_is_not_utf8() {
+		add_filter(
+			'wp_mail_charset',
+			function () {
+				return 'ISO-8859-1';
+			}
+		);
+
+		$subject_utf8 = 'Ää Öö testi';
+		$subject_iso  = mb_convert_encoding( $subject_utf8, 'ISO-8859-1', 'UTF-8' );
+
+		$email = Euromail_Email_Normalizer::normalize( $this->base_atts( array( 'subject' => $subject_iso ) ) );
+
+		remove_all_filters( 'wp_mail_charset' );
+
+		$this->assertSame( $subject_utf8, $email['subject'] );
+		$this->assertNotFalse( wp_json_encode( $email ), 'The canonical email must always be valid UTF-8 / JSON-encodable.' );
+	}
+
+	public function test_charset_conversion_applies_to_recipient_display_names() {
+		add_filter(
+			'wp_mail_charset',
+			function () {
+				return 'ISO-8859-1';
+			}
+		);
+
+		$name_utf8 = 'Jönköping Testaaja';
+		$name_iso  = mb_convert_encoding( $name_utf8, 'ISO-8859-1', 'UTF-8' );
+
+		$atts  = $this->base_atts( array( 'to' => $name_iso . ' <recipient@example.com>' ) );
+		$email = Euromail_Email_Normalizer::normalize( $atts );
+
+		remove_all_filters( 'wp_mail_charset' );
+
+		$this->assertSame( $name_utf8 . ' <recipient@example.com>', $email['to'][0] );
+	}
+
+	public function test_no_conversion_happens_when_charset_is_already_utf8() {
+		add_filter(
+			'wp_mail_charset',
+			function () {
+				return 'UTF-8';
+			}
+		);
+
+		$email = Euromail_Email_Normalizer::normalize( $this->base_atts( array( 'subject' => 'Ää Öö unchanged' ) ) );
+
+		remove_all_filters( 'wp_mail_charset' );
+
+		$this->assertSame( 'Ää Öö unchanged', $email['subject'] );
+	}
+
+	// -- Attachment filename keys (WP 6.2 custom-filename contract) --
+
+	public function test_string_key_preserves_custom_filename_and_resolves_content_type_from_key() {
+		// A tempnam()-style path with no extension of its own, like the
+		// paths WordPress itself generates for uploads.
+		$path = tempnam( sys_get_temp_dir(), 'euromail-test-' );
+		file_put_contents( $path, '%PDF-1.4 fake pdf content' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+		$this->temp_files[] = $path;
+
+		$atts  = $this->base_atts( array( 'attachments' => array( 'Invoice-1042.pdf' => $path ) ) );
+		$email = Euromail_Email_Normalizer::normalize( $atts );
+
+		$this->assertCount( 1, $email['attachments'] );
+		$this->assertSame( 'Invoice-1042.pdf', $email['attachments'][0]['filename'] );
+		$this->assertSame( 'application/pdf', $email['attachments'][0]['content_type'] );
+	}
+
+	public function test_numeric_keys_still_fall_back_to_basename() {
+		$path = $this->make_temp_file( 'hello world', '.txt' );
+
+		$atts  = $this->base_atts( array( 'attachments' => array( $path ) ) );
+		$email = Euromail_Email_Normalizer::normalize( $atts );
+
+		$this->assertSame( basename( $path ), $email['attachments'][0]['filename'] );
+	}
 }

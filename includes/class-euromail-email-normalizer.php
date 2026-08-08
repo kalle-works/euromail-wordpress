@@ -53,15 +53,11 @@ class Euromail_Email_Normalizer {
 		$headers     = isset( $atts['headers'] ) ? $atts['headers'] : '';
 		$attachments = isset( $atts['attachments'] ) ? $atts['attachments'] : array();
 
-		$content_type = apply_filters( 'wp_mail_content_type', 'text/plain' );
-
-		// Applied for ecosystem compatibility; the resulting charset is not
-		// currently forwarded to the API backend but plugins that hook this
-		// filter as a side effect (logging, etc.) still see it fire.
-		apply_filters( 'wp_mail_charset', get_bloginfo( 'charset' ) );
-
-		$default_from_email = self::default_from_email();
-		$default_from_name  = self::default_from_name();
+		// Raw defaults, matching core wp_mail()'s own initial values. Filters
+		// are applied later, to the value actually resolved (header or
+		// default) — not to the default alone — so they always see and can
+		// override whichever value would otherwise be used.
+		$content_type = 'text/plain';
 
 		$cc             = array();
 		$bcc            = array();
@@ -117,18 +113,34 @@ class Euromail_Email_Normalizer {
 			}
 		}
 
-		if ( Euromail_Settings::get( 'euromail_force_from_enabled' ) ) {
+		// Resolve From email/name: header value if present, else the raw
+		// default — THEN apply the wp_mail_from(_name) filters to whichever
+		// one that is, matching core precedence (the filter always runs and
+		// its return value always wins, whether the base was a header or
+		// the default). Force-From, when valid, overrides the result of
+		// that filter chain entirely.
+		$base_from_email = '' !== $from_header['email'] ? $from_header['email'] : self::default_from_base_email();
+		$base_from_name  = '' !== $from_header['name'] ? $from_header['name'] : self::default_from_base_name();
+
+		$filtered_from_email = apply_filters( 'wp_mail_from', $base_from_email );
+		$filtered_from_name  = apply_filters( 'wp_mail_from_name', $base_from_name );
+
+		if ( self::has_valid_force_from() ) {
 			$from_email = (string) Euromail_Settings::get( 'euromail_force_from_email' );
 			$from_name  = (string) Euromail_Settings::get( 'euromail_force_from_name' );
-		} elseif ( '' !== $from_header['email'] ) {
-			$from_email = $from_header['email'];
-			$from_name  = '' !== $from_header['name'] ? $from_header['name'] : $default_from_name;
 		} else {
-			$from_email = $default_from_email;
-			$from_name  = $default_from_name;
+			$from_email = $filtered_from_email;
+			$from_name  = $filtered_from_name;
 		}
 
-		$body_key = ( 'text/html' === strtolower( $content_type ) ) ? 'html_body' : 'text_body';
+		// Same pattern for content type: the filter sees the header-derived
+		// (or default) value and its return wins; only afterwards do we
+		// strip any ';charset=...' suffix to decide html vs. text, since a
+		// filter callback may itself append one.
+		$content_type = apply_filters( 'wp_mail_content_type', $content_type );
+		$body_key     = ( 'text/html' === self::strip_charset_suffix( $content_type ) ) ? 'html_body' : 'text_body';
+
+		$charset = apply_filters( 'wp_mail_charset', get_bloginfo( 'charset' ) );
 
 		$canonical = array(
 			'from'        => $from_email,
@@ -142,6 +154,10 @@ class Euromail_Email_Normalizer {
 			'headers'     => $custom_headers,
 			'attachments' => self::normalize_attachments( $attachments ),
 		);
+
+		if ( '' !== $charset && 0 !== strcasecmp( $charset, 'UTF-8' ) ) {
+			$canonical = self::convert_canonical_to_utf8( $canonical, $charset, $body_key );
+		}
 
 		/**
 		 * Filters the canonical email array right before it is handed to a
@@ -221,35 +237,154 @@ class Euromail_Email_Normalizer {
 	}
 
 	/**
-	 * Resolve the default From email address the same way core wp_mail()
-	 * does, applying the wp_mail_from filter.
+	 * Raw (unfiltered) default From email address, the same base value core
+	 * wp_mail() computes before applying the wp_mail_from filter.
 	 *
 	 * @return string
 	 */
-	private static function default_from_email() {
+	private static function default_from_base_email() {
 		$sitename = strtolower( (string) wp_parse_url( network_home_url(), PHP_URL_HOST ) );
 
 		if ( 0 === strpos( $sitename, 'www.' ) ) {
 			$sitename = substr( $sitename, 4 );
 		}
 
-		$default = 'wordpress@' . $sitename;
-
-		return apply_filters( 'wp_mail_from', $default );
+		return 'wordpress@' . $sitename;
 	}
 
 	/**
-	 * Resolve the default From name, applying the wp_mail_from_name filter.
+	 * Raw (unfiltered) default From name.
 	 *
 	 * @return string
 	 */
-	private static function default_from_name() {
-		return apply_filters( 'wp_mail_from_name', 'WordPress' );
+	private static function default_from_base_name() {
+		return 'WordPress';
+	}
+
+	/**
+	 * Whether Force From is enabled AND holds a valid email address. Guards
+	 * against an admin having enabled the toggle with an empty/invalid
+	 * address (which the settings page itself also refuses to save) — if
+	 * that ever happens, Force From is ignored rather than sending from an
+	 * empty address.
+	 *
+	 * @return bool
+	 */
+	private static function has_valid_force_from() {
+		if ( ! Euromail_Settings::get( 'euromail_force_from_enabled' ) ) {
+			return false;
+		}
+
+		return is_email( (string) Euromail_Settings::get( 'euromail_force_from_email' ) );
+	}
+
+	/**
+	 * Reduce a Content-Type value to its bare, lowercased mime type,
+	 * dropping any ";charset=..." (or other parameter) suffix.
+	 *
+	 * @param string $content_type Raw content type, e.g. "text/html; charset=UTF-8".
+	 * @return string
+	 */
+	private static function strip_charset_suffix( $content_type ) {
+		$parts = explode( ';', $content_type, 2 );
+
+		return strtolower( trim( $parts[0] ) );
+	}
+
+	/**
+	 * Convert every user-supplied text field in the canonical email to
+	 * UTF-8, so the API payload is always valid UTF-8 regardless of the
+	 * site's wp_mail_charset.
+	 *
+	 * @param array  $canonical Canonical email array.
+	 * @param string $charset   Source charset, e.g. "ISO-8859-1".
+	 * @param string $body_key  Either 'html_body' or 'text_body'.
+	 * @return array
+	 */
+	private static function convert_canonical_to_utf8( array $canonical, $charset, $body_key ) {
+		$canonical['subject']   = self::convert_to_utf8( $canonical['subject'], $charset );
+		$canonical['from_name'] = self::convert_to_utf8( $canonical['from_name'], $charset );
+		$canonical[ $body_key ] = self::convert_to_utf8( $canonical[ $body_key ], $charset );
+
+		foreach ( array( 'to', 'cc', 'bcc' ) as $key ) {
+			$canonical[ $key ] = array_map(
+				function ( $address ) use ( $charset ) {
+					return self::convert_address_display_name_to_utf8( $address, $charset );
+				},
+				$canonical[ $key ]
+			);
+		}
+
+		$canonical['reply_to'] = self::convert_address_display_name_to_utf8( $canonical['reply_to'], $charset );
+
+		return $canonical;
+	}
+
+	/**
+	 * Convert only the display-name portion of a "Name <addr>" string to
+	 * UTF-8, leaving the address itself untouched.
+	 *
+	 * @param string $address Address, possibly in "Name <addr>" form.
+	 * @param string $charset Source charset.
+	 * @return string
+	 */
+	private static function convert_address_display_name_to_utf8( $address, $charset ) {
+		if ( '' === $address ) {
+			return $address;
+		}
+
+		$bracket_pos = strpos( $address, '<' );
+
+		if ( false === $bracket_pos || 0 === $bracket_pos ) {
+			return $address;
+		}
+
+		$name = rtrim( substr( $address, 0, $bracket_pos ) );
+		$rest = substr( $address, $bracket_pos );
+
+		return self::convert_to_utf8( $name, $charset ) . ' ' . $rest;
+	}
+
+	/**
+	 * Convert a single string to UTF-8 from the given source charset, via
+	 * mb_convert_encoding() with an iconv//TRANSLIT fallback. Passes the
+	 * value through unchanged if neither extension is available.
+	 *
+	 * @param string $value   Source string.
+	 * @param string $charset Source charset.
+	 * @return string
+	 */
+	private static function convert_to_utf8( $value, $charset ) {
+		if ( '' === $value ) {
+			return $value;
+		}
+
+		if ( function_exists( 'mb_convert_encoding' ) ) {
+			$converted = @mb_convert_encoding( $value, 'UTF-8', $charset ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+
+			if ( is_string( $converted ) && '' !== $converted ) {
+				return $converted;
+			}
+		}
+
+		if ( function_exists( 'iconv' ) ) {
+			$converted = @iconv( $charset, 'UTF-8//TRANSLIT', $value ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+
+			if ( is_string( $converted ) ) {
+				return $converted;
+			}
+		}
+
+		return $value;
 	}
 
 	/**
 	 * Convert wp_mail() attachment file paths into base64 payloads,
 	 * enforcing count/size/type limits client-side.
+	 *
+	 * String array keys are treated as the WP 6.2+ custom-filename contract
+	 * (`['Invoice.pdf' => $tmp_path]`); numeric keys fall back to
+	 * basename($path).
 	 *
 	 * @param string|array $attachments File path(s).
 	 * @return array
@@ -264,9 +399,19 @@ class Euromail_Email_Normalizer {
 			$attachments = preg_split( '/\r\n|\r|\n/', $attachments );
 		}
 
-		$attachments = array_values( array_filter( array_map( 'trim', $attachments ) ) );
+		$paths = array();
 
-		if ( count( $attachments ) > self::MAX_ATTACHMENTS ) {
+		foreach ( $attachments as $key => $path ) {
+			$path = trim( (string) $path );
+
+			if ( '' === $path ) {
+				continue;
+			}
+
+			$paths[ $key ] = $path;
+		}
+
+		if ( count( $paths ) > self::MAX_ATTACHMENTS ) {
 			throw new Exception(
 				sprintf(
 					/* translators: %d: maximum number of attachments allowed */
@@ -279,13 +424,19 @@ class Euromail_Email_Normalizer {
 		$result      = array();
 		$total_bytes = 0;
 
-		foreach ( $attachments as $path ) {
+		foreach ( $paths as $key => $path ) {
 			if ( ! file_exists( $path ) ) {
 				continue;
 			}
 
-			$filename  = basename( $path );
+			$filename  = is_string( $key ) ? $key : basename( $path );
 			$extension = strtolower( pathinfo( $filename, PATHINFO_EXTENSION ) );
+
+			if ( '' === $extension ) {
+				// The display filename (a custom string key) had no
+				// extension of its own; fall back to the source path's.
+				$extension = strtolower( pathinfo( $path, PATHINFO_EXTENSION ) );
+			}
 
 			if ( in_array( $extension, self::BLOCKED_EXTENSIONS, true ) ) {
 				throw new Exception(
@@ -325,6 +476,8 @@ class Euromail_Email_Normalizer {
 				'filename'     => $filename,
 				'content_type' => self::detect_content_type( $path, $filename ),
 				'content'      => base64_encode( (string) file_get_contents( $path ) ), // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+				'path'         => $path,
+				'size'         => $size,
 			);
 		}
 
@@ -336,7 +489,7 @@ class Euromail_Email_Normalizer {
 	 * back to fileinfo when WordPress does not recognize the extension.
 	 *
 	 * @param string $path     Absolute file path.
-	 * @param string $filename File name.
+	 * @param string $filename Display file name (may differ from the path's own basename).
 	 * @return string
 	 */
 	private static function detect_content_type( $path, $filename ) {
