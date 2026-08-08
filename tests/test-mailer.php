@@ -239,6 +239,45 @@ class Test_Euromail_Mailer extends WP_UnitTestCase {
 		$this->assertLessThanOrEqual( Euromail_Queue::BACKOFF_SECONDS[0] + 5, $seconds_until_retry, 'First retry should be scheduled around the first backoff step.' );
 	}
 
+	public function test_a_retry_after_hint_on_the_very_first_failure_is_honored() {
+		update_option( 'euromail_api_key', 'em_live_test' );
+
+		// A long Retry-After (well past the first backoff step) must win
+		// even on the FIRST scheduled retry, not only on later ones —
+		// this was previously hardcoded to the fixed backoff step
+		// regardless of any hint the backend gave on the initial attempt.
+		add_filter(
+			'euromail_backends',
+			function () {
+				return array( 'fake' => Euromail_Test_Fake_Backend::failing( $this->rate_limited_exception( 21600 ) ) );
+			}
+		);
+
+		wp_mail( 'recipient@example.com', 'Hello', 'Body text' );
+
+		$row                 = $this->latest_log_row();
+		$seconds_until_retry = strtotime( $row['next_attempt_at'] ) - time();
+		$this->assertGreaterThan( 21600 - 10, $seconds_until_retry, 'A Retry-After hint on the very first failure must be honored, not overridden by the fixed first backoff step.' );
+	}
+
+	/**
+	 * Build a Throwable that Euromail_Mailer recognizes as retryable with a
+	 * specific Retry-After hint. EuroMailException::getRetryAfter() is the
+	 * only source of that hint in the real code, so use the SDK's
+	 * RateLimitException directly rather than reinventing the mechanism in
+	 * a test-only class.
+	 *
+	 * @param int $retry_after Seconds.
+	 * @return Throwable
+	 */
+	private function rate_limited_exception( $retry_after ) {
+		if ( ! EUROMAIL_SDK_LOADED ) {
+			$this->markTestSkipped( 'euromail/euromail-php SDK not installed.' );
+		}
+
+		return new EuroMail\Exceptions\RateLimitException( 'rate limited', $retry_after, 429 );
+	}
+
 	public function test_backend_throwing_error_does_not_fatal() {
 		update_option( 'euromail_api_key', 'em_live_test' );
 
@@ -289,7 +328,7 @@ class Test_Euromail_Mailer extends WP_UnitTestCase {
 		);
 	}
 
-	public function test_failed_send_with_store_body_disabled_nulls_the_payload() {
+	public function test_failed_send_with_store_body_disabled_leaves_payload_null() {
 		update_option( 'euromail_api_key', 'em_live_test' );
 		update_option( 'euromail_store_body', false );
 
@@ -576,5 +615,28 @@ class Test_Euromail_Mailer extends WP_UnitTestCase {
 		$row = $this->latest_log_row();
 		$this->assertSame( 'sent', $row['status'] );
 		$this->assertSame( 'smtp', $row['backend'] );
+	}
+
+	public function test_a_retryable_primary_followed_by_a_permanent_fallback_still_queues_a_retry() {
+		update_option( 'euromail_api_key', 'em_live_test' );
+
+		add_filter(
+			'euromail_backends',
+			function () {
+				return array(
+					'api'  => Euromail_Test_Fake_Backend::failing( new Euromail_Smtp_Exception( 'primary busy', true ) ),
+					'smtp' => Euromail_Test_Fake_Backend::failing( new Euromail_Smtp_Exception( 'fallback misconfigured', false ) ),
+				);
+			}
+		);
+
+		wp_mail( 'recipient@example.com', 'Hello', 'Body text' );
+
+		$row = $this->latest_log_row();
+		$this->assertSame(
+			'queued',
+			$row['status'],
+			'The overall attempt is retryable if ANY backend in the chain was retryable, not only the last one tried — a permanent fallback must not override a retryable primary.'
+		);
 	}
 }

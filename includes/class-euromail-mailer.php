@@ -67,15 +67,13 @@ class Euromail_Mailer {
 		$result = $this->attempt_send( $email, $idempotency_key );
 
 		if ( $result['success'] ) {
-			$store_body = (bool) Euromail_Settings::get( 'euromail_store_body' );
-
-			$this->update_log(
+			self::finalize_log(
 				$log_id,
+				'sent',
+				$email,
 				array(
-					'status'     => 'sent',
 					'backend'    => $result['backend'],
 					'message_id' => $result['message_id'],
-					'payload'    => $store_body ? wp_json_encode( self::redact_payload_for_storage( $email ) ) : null,
 					'attempts'   => 1,
 				)
 			);
@@ -92,19 +90,17 @@ class Euromail_Mailer {
 					'status'          => 'queued',
 					'error'           => $result['error'],
 					'attempts'        => 1,
-					'next_attempt_at' => gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) + Euromail_Queue::BACKOFF_SECONDS[0] ), // phpcs:ignore WordPress.DateTime.CurrentTimeTimestamp.Requested
+					'next_attempt_at' => Euromail_Queue::next_attempt_at( 1, $result['retry_after'] ),
 				)
 			);
 		} else {
-			$store_body = (bool) Euromail_Settings::get( 'euromail_store_body' );
-
-			$this->update_log(
+			self::finalize_log(
 				$log_id,
+				'failed',
+				$email,
 				array(
-					'status'   => 'failed',
 					'error'    => $result['error'],
 					'attempts' => 1,
-					'payload'  => $store_body ? wp_json_encode( self::redact_payload_for_storage( $email ) ) : null,
 				)
 			);
 		}
@@ -138,9 +134,9 @@ class Euromail_Mailer {
 			);
 		}
 
-		$last_error       = '';
-		$last_retryable   = true;
-		$last_retry_after = null;
+		$last_error    = '';
+		$any_retryable = false;
+		$retry_after   = null;
 
 		foreach ( $backends as $name => $backend ) {
 			try {
@@ -158,9 +154,20 @@ class Euromail_Mailer {
 				// A backend (or the SDK/HTTP/SMTP layer beneath it) may
 				// throw anything, including Errors, not just Exceptions.
 				// wp_mail() must never fatal because of it.
-				$last_error       = sprintf( '%s: %s %s', $name, $e->getCode(), $e->getMessage() );
-				$last_retryable   = self::is_retryable_exception( $e );
-				$last_retry_after = self::retry_after_from_exception( $e );
+				$last_error = sprintf( '%s: %s %s', $name, $e->getCode(), $e->getMessage() );
+
+				// The chain is retryable overall if ANY attempt was, not
+				// just the last one tried: a retryable primary followed by
+				// a permanent fallback must still schedule a retry — the
+				// fallback's permanent failure doesn't undo the fact that
+				// trying again might reach the primary.
+				if ( self::is_retryable_exception( $e ) ) {
+					$any_retryable = true;
+
+					if ( null === $retry_after ) {
+						$retry_after = self::retry_after_from_exception( $e );
+					}
+				}
 			}
 		}
 
@@ -168,9 +175,9 @@ class Euromail_Mailer {
 			'success'     => false,
 			'backend'     => null,
 			'message_id'  => null,
-			'retryable'   => $last_retryable,
+			'retryable'   => $any_retryable,
 			'error'       => $last_error,
-			'retry_after' => $last_retry_after,
+			'retry_after' => $retry_after,
 		);
 	}
 
@@ -220,6 +227,33 @@ class Euromail_Mailer {
 		if ( $log_id > 0 ) {
 			Euromail_Logger::update( $log_id, $data );
 		}
+	}
+
+	/**
+	 * Finalize a log row's transition to a terminal state ('sent' or
+	 * 'failed'), applying euromail_store_body exactly once: on keeps the
+	 * payload with attachment content stripped, off nulls it outright.
+	 * Both the initial pre_wp_mail() attempt and Euromail_Queue's own
+	 * terminal transitions call through here — this rule has already
+	 * regressed independently in each of those two call sites once
+	 * before, so it now lives in exactly one place.
+	 *
+	 * @param int    $log_id Row ID. A value <= 0 is a no-op, matching update_log().
+	 * @param string $status 'sent' or 'failed'.
+	 * @param array  $email  Canonical email array, for payload redaction.
+	 * @param array  $fields Additional column values for this transition (backend, message_id, attempts, error, next_attempt_at, ...). Must not set 'status' or 'payload'; those are always this method's own.
+	 */
+	public static function finalize_log( $log_id, $status, array $email, array $fields ) {
+		if ( $log_id <= 0 ) {
+			return;
+		}
+
+		$store_body = (bool) Euromail_Settings::get( 'euromail_store_body' );
+
+		$fields['status']  = $status;
+		$fields['payload'] = $store_body ? wp_json_encode( self::redact_payload_for_storage( $email ) ) : null;
+
+		Euromail_Logger::update( $log_id, $fields );
 	}
 
 	/**

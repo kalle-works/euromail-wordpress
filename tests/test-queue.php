@@ -41,6 +41,7 @@ class Test_Euromail_Queue extends WP_UnitTestCase {
 	public function tear_down() {
 		remove_all_filters( 'euromail_backends' );
 		remove_all_actions( 'wp_mail_succeeded' );
+		remove_all_actions( 'wp_mail_failed' );
 
 		foreach ( $this->temp_files as $path ) {
 			if ( file_exists( $path ) ) {
@@ -122,7 +123,52 @@ class Test_Euromail_Queue extends WP_UnitTestCase {
 		$this->assertNull( $row['next_attempt_at'] );
 
 		$this->assertIsArray( $captured );
-		$this->assertSame( 'recipient@example.com', $captured['to'] );
+		$this->assertSame( array( 'recipient@example.com' ), $captured['to'], 'wp_mail_succeeded must receive a type-correct array for to, reconstructed from the canonical email, not the log row\'s comma-joined column.' );
+		$this->assertSame( 'Queued test', $captured['subject'] );
+		$this->assertSame( 'Body text', $captured['message'] );
+		$this->assertIsArray( $captured['headers'] );
+		$this->assertIsArray( $captured['attachments'] );
+	}
+
+	public function test_process_row_wp_mail_succeeded_carries_html_body_and_attachment_paths() {
+		$path = $this->make_temp_file( 'attachment bytes' );
+
+		$id = $this->insert_queued_row(
+			array(
+				'payload' => wp_json_encode(
+					array(
+						'from'        => 'wordpress@example.com',
+						'from_name'   => 'WordPress',
+						'to'          => array( 'recipient@example.com' ),
+						'cc'          => array(),
+						'bcc'         => array(),
+						'reply_to'    => '',
+						'subject'     => 'Queued test',
+						'html_body'   => '<p>Hi</p>',
+						'headers'     => array( 'X-Custom' => 'custom-value' ),
+						'attachments' => array(
+							array( 'filename' => 'file.txt', 'content_type' => 'text/plain', 'path' => $path, 'content' => base64_encode( 'attachment bytes' ) ),
+						),
+					)
+				),
+			)
+		);
+
+		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::succeeding( 'msg-html' ) ) );
+
+		$captured = null;
+		add_action(
+			'wp_mail_succeeded',
+			function ( $data ) use ( &$captured ) {
+				$captured = $data;
+			}
+		);
+
+		Euromail_Queue::process_row( $id );
+
+		$this->assertSame( '<p>Hi</p>', $captured['message'], 'The HTML body must be used when present, not the plain-text body.' );
+		$this->assertSame( array( 'X-Custom' => 'custom-value' ), $captured['headers'] );
+		$this->assertSame( array( $path ), $captured['attachments'], 'Attachments must be reconstructed as a plain array of file paths, matching what wp_mail() itself would have passed.' );
 	}
 
 	public function test_process_row_reschedules_a_retryable_failure_under_the_attempt_cap() {
@@ -216,6 +262,64 @@ class Test_Euromail_Queue extends WP_UnitTestCase {
 		$this->assertSame( 2, (int) $row['attempts'] );
 	}
 
+	public function test_process_row_fires_wp_mail_failed_when_it_reaches_terminal_failed() {
+		$id = $this->insert_queued_row( array( 'attempts' => 1 ) );
+
+		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::failing( new Euromail_Smtp_Exception( 'bad credentials', false ) ) ) );
+
+		$captured = null;
+		add_action(
+			'wp_mail_failed',
+			function ( $error ) use ( &$captured ) {
+				$captured = $error;
+			}
+		);
+
+		Euromail_Queue::process_row( $id );
+
+		$this->assertInstanceOf( WP_Error::class, $captured );
+		$this->assertSame( 'euromail_send_failed', $captured->get_error_code() );
+		$this->assertStringContainsString( 'bad credentials', $captured->get_error_message() );
+		$this->assertSame( 2, $captured->get_error_data()['attempts'], 'The WP_Error data must carry the attempts count.' );
+	}
+
+	public function test_process_row_does_not_fire_wp_mail_failed_on_an_intermediate_requeue() {
+		$id = $this->insert_queued_row( array( 'attempts' => 1 ) );
+
+		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::failing( new Euromail_Smtp_Exception( 'still down', true ) ) ) );
+
+		$fired = false;
+		add_action(
+			'wp_mail_failed',
+			function () use ( &$fired ) {
+				$fired = true;
+			}
+		);
+
+		Euromail_Queue::process_row( $id );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertSame( 'queued', $row['status'], 'Sanity check: this attempt must still be an intermediate re-queue, not a terminal failure.' );
+		$this->assertFalse( $fired, 'wp_mail_failed must only fire once a row reaches terminal failed, not on every intermediate re-queue.' );
+	}
+
+	public function test_process_row_fires_wp_mail_failed_when_the_stored_payload_is_unreadable() {
+		$id = $this->insert_queued_row( array( 'payload' => null ) );
+
+		$captured = null;
+		add_action(
+			'wp_mail_failed',
+			function ( $error ) use ( &$captured ) {
+				$captured = $error;
+			}
+		);
+
+		Euromail_Queue::process_row( $id );
+
+		$this->assertInstanceOf( WP_Error::class, $captured );
+		$this->assertSame( 'euromail_send_failed', $captured->get_error_code() );
+	}
+
 	public function test_process_row_failed_with_store_body_disabled_nulls_the_payload() {
 		update_option( 'euromail_store_body', false );
 
@@ -307,6 +411,63 @@ class Test_Euromail_Queue extends WP_UnitTestCase {
 
 		$this->assertSame( 'sent', $due_row['status'] );
 		$this->assertSame( 'queued', $not_due_row['status'], 'A row scheduled in the future must not be processed yet.' );
+	}
+
+	public function test_claim_for_retry_reclaims_a_stale_sending_row_but_only_once() {
+		$stale_before = gmdate( 'Y-m-d H:i:s', time() - Euromail_Queue::STALE_SENDING_SECONDS );
+
+		$id = $this->insert_queued_row(
+			array(
+				'status'     => 'sending',
+				'updated_at' => gmdate( 'Y-m-d H:i:s', time() - Euromail_Queue::STALE_SENDING_SECONDS - 60 ),
+			)
+		);
+
+		$first_claim  = Euromail_Logger::claim_for_retry( $id, $stale_before );
+		$second_claim = Euromail_Logger::claim_for_retry( $id, $stale_before );
+
+		$this->assertTrue( $first_claim, 'A row abandoned in sending past the stale threshold must be reclaimable.' );
+		$this->assertFalse( $second_claim, 'A second caller must not also reclaim an already-reclaimed row.' );
+	}
+
+	public function test_claim_for_retry_does_not_reclaim_a_fresh_sending_row() {
+		$stale_before = gmdate( 'Y-m-d H:i:s', time() - Euromail_Queue::STALE_SENDING_SECONDS );
+
+		$id = $this->insert_queued_row(
+			array(
+				'status'     => 'sending',
+				'updated_at' => gmdate( 'Y-m-d H:i:s', time() - 30 ),
+			)
+		);
+
+		$claimed = Euromail_Logger::claim_for_retry( $id, $stale_before );
+
+		$this->assertFalse( $claimed, 'A row still fresh in sending status must not be stolen — it may be an actively in-progress send.' );
+	}
+
+	public function test_process_picks_up_a_stale_sending_row_but_leaves_a_fresh_one_alone() {
+		$stale_id = $this->insert_queued_row(
+			array(
+				'status'     => 'sending',
+				'updated_at' => gmdate( 'Y-m-d H:i:s', time() - Euromail_Queue::STALE_SENDING_SECONDS - 60 ),
+			)
+		);
+		$fresh_id = $this->insert_queued_row(
+			array(
+				'status'     => 'sending',
+				'updated_at' => gmdate( 'Y-m-d H:i:s', time() - 30 ),
+			)
+		);
+
+		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::succeeding( 'msg-reclaimed' ) ) );
+
+		Euromail_Queue::process();
+
+		$stale_row = Euromail_Logger::get( $stale_id );
+		$fresh_row = Euromail_Logger::get( $fresh_id );
+
+		$this->assertSame( 'sent', $stale_row['status'], 'A crashed worker\'s abandoned "sending" row must become visible to the next run, not stuck forever.' );
+		$this->assertSame( 'sending', $fresh_row['status'], 'A row that only just started sending must not be touched by this same run.' );
 	}
 
 	public function test_process_row_fails_gracefully_when_payload_is_missing() {
