@@ -25,9 +25,9 @@ class Euromail_Plugin {
 
 		// Registered unconditionally (not only when is_admin()) so the cron
 		// runner — including `wp cron event run euromail_prune_logs` /
-		// `euromail_process_retry_queue` — can always find them.
+		// `euromail_process_queue` — can always find them.
 		add_action( 'euromail_prune_logs', array( 'Euromail_Retention', 'prune' ) );
-		add_action( 'euromail_process_retry_queue', array( 'Euromail_Queue', 'process' ) );
+		add_action( 'euromail_process_queue', array( 'Euromail_Queue', 'process' ) );
 
 		if ( is_admin() && class_exists( 'Euromail_Admin' ) ) {
 			$admin = new Euromail_Admin();
