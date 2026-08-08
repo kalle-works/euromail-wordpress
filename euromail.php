@@ -40,8 +40,11 @@ define( 'EUROMAIL_SDK_LOADED', interface_exists( 'EuroMail\\Http\\TransportInter
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-settings.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-logger.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-retention.php';
+require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-smtp-exception.php';
+require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-smtp-backend.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-email-normalizer.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-mailer.php';
+require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-queue.php';
 
 if ( EUROMAIL_SDK_LOADED ) {
 	require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-wp-transport.php';
@@ -50,6 +53,7 @@ if ( EUROMAIL_SDK_LOADED ) {
 
 if ( is_admin() ) {
 	require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-admin.php';
+	require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-log-table.php';
 }
 
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-activator.php';
@@ -58,6 +62,25 @@ require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-plugin.php';
 
 register_activation_hook( EUROMAIL_PLUGIN_FILE, array( 'Euromail_Activator', 'activate' ) );
 register_deactivation_hook( EUROMAIL_PLUGIN_FILE, array( 'Euromail_Deactivator', 'deactivate' ) );
+
+/**
+ * Register the euromail_minutely cron schedule. Registered unconditionally
+ * at the top level (not inside Euromail_Plugin::init()) so it is always in
+ * place before wp_schedule_event() is called — including during
+ * activation, where the exact ordering relative to plugins_loaded isn't
+ * guaranteed.
+ */
+function euromail_cron_schedules( $schedules ) {
+	if ( ! isset( $schedules['euromail_minutely'] ) ) {
+		$schedules['euromail_minutely'] = array(
+			'interval' => 60,
+			'display'  => __( 'Every minute (Euromail retry queue)', 'euromail' ),
+		);
+	}
+
+	return $schedules;
+}
+add_filter( 'cron_schedules', 'euromail_cron_schedules' ); // phpcs:ignore WordPress.WP.CronInterval.CronSchedulesInterval
 
 /**
  * Boot the plugin once all other plugins have loaded.

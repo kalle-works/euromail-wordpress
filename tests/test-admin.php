@@ -39,6 +39,26 @@ class Euromail_Test_Fake_Sdk_Client {
 	}
 }
 
+/**
+ * Fake backend that records the canonical email it was asked to send, so a
+ * test can inspect what a resend actually rehydrated before sending.
+ */
+class Euromail_Test_Capturing_Backend {
+
+	public $captured_email;
+
+	private $result;
+
+	public function __construct( $message_id ) {
+		$this->result = array( 'message_id' => $message_id );
+	}
+
+	public function send( array $email, $idempotency_key ) {
+		$this->captured_email = $email;
+		return $this->result;
+	}
+}
+
 class Test_Euromail_Admin_Settings_Save extends WP_UnitTestCase {
 
 	private $admin;
@@ -76,7 +96,7 @@ class Test_Euromail_Admin_Settings_Save extends WP_UnitTestCase {
 			)
 		);
 
-		$this->assertFalse( get_option( 'euromail_force_from_enabled' ) );
+		$this->assertFalse( Euromail_Settings::get( 'euromail_force_from_enabled' ) );
 
 		$found = false;
 		foreach ( get_settings_errors( 'euromail_settings' ) as $error ) {
@@ -95,7 +115,7 @@ class Test_Euromail_Admin_Settings_Save extends WP_UnitTestCase {
 			)
 		);
 
-		$this->assertFalse( get_option( 'euromail_force_from_enabled' ) );
+		$this->assertFalse( Euromail_Settings::get( 'euromail_force_from_enabled' ) );
 	}
 
 	public function test_force_from_with_valid_email_is_saved_and_enabled() {
@@ -106,7 +126,7 @@ class Test_Euromail_Admin_Settings_Save extends WP_UnitTestCase {
 			)
 		);
 
-		$this->assertTrue( get_option( 'euromail_force_from_enabled' ) );
+		$this->assertTrue( Euromail_Settings::get( 'euromail_force_from_enabled' ) );
 		$this->assertSame( 'force@example.com', get_option( 'euromail_force_from_email' ) );
 	}
 }
@@ -217,5 +237,248 @@ class Test_Euromail_Admin_Verify_Key extends WP_Ajax_UnitTestCase {
 		}
 
 		$this->assertSame( 'em_live_saved', $seen_api_key );
+	}
+}
+
+class Test_Euromail_Admin_Log_Row_Actions extends WP_UnitTestCase {
+
+	private $admin;
+
+	public function set_up() {
+		parent::set_up();
+		$this->admin = new Euromail_Admin();
+	}
+
+	public function tear_down() {
+		remove_all_filters( 'euromail_backends' );
+		parent::tear_down();
+	}
+
+	private function insert_row( array $overrides = array() ) {
+		$defaults = array(
+			'status'          => 'failed',
+			'idempotency_key' => wp_generate_uuid4(),
+			'mail_to'         => 'recipient@example.com',
+			'subject'         => 'Log action test',
+			'payload'         => wp_json_encode(
+				array(
+					'from'        => 'wordpress@example.com',
+					'from_name'   => 'WordPress',
+					'to'          => array( 'recipient@example.com' ),
+					'cc'          => array(),
+					'bcc'         => array(),
+					'reply_to'    => '',
+					'subject'     => 'Log action test',
+					'text_body'   => 'Body text',
+					'headers'     => array(),
+					'attachments' => array(),
+				)
+			),
+		);
+
+		return Euromail_Logger::create( array_merge( $defaults, $overrides ) );
+	}
+
+	public function test_delete_action_removes_the_row_and_returns_the_deleted_notice() {
+		$id = $this->insert_row();
+
+		$notice = $this->admin->process_log_row_action( 'delete', $id );
+
+		$this->assertSame( 'deleted', $notice );
+		$this->assertNull( Euromail_Logger::get( $id ) );
+	}
+
+	public function test_resend_action_with_no_payload_returns_resend_failed_and_leaves_the_row_alone() {
+		$id = $this->insert_row( array( 'payload' => null ) );
+
+		$notice = $this->admin->process_log_row_action( 'resend', $id );
+
+		$this->assertSame( 'resend_failed', $notice );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertSame( 'failed', $row['status'], 'A resend that never had a payload to work with must not touch the row.' );
+	}
+
+	public function test_resend_of_an_already_sent_row_is_refused_and_the_row_is_unchanged() {
+		$id = $this->insert_row(
+			array(
+				'status'     => 'sent',
+				'backend'    => 'api',
+				'message_id' => 'msg-already-delivered',
+				'attempts'   => 1,
+			)
+		);
+		$original_row = Euromail_Logger::get( $id );
+
+		add_filter(
+			'euromail_backends',
+			function () {
+				return array( 'fake' => Euromail_Test_Fake_Backend::succeeding( 'msg-should-not-happen' ) );
+			}
+		);
+
+		$notice = $this->admin->process_log_row_action( 'resend', $id );
+
+		$this->assertSame( 'resend_not_allowed', $notice );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertSame( $original_row, $row, 'A resend of an already-sent row must refuse and leave every column exactly as it was.' );
+	}
+
+	public function test_resend_of_a_row_currently_sending_is_refused() {
+		$id = $this->insert_row( array( 'status' => 'sending' ) );
+
+		$notice = $this->admin->process_log_row_action( 'resend', $id );
+
+		$this->assertSame( 'resend_not_allowed', $notice );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertSame( 'sending', $row['status'], 'A row actively being sent elsewhere must not be resent concurrently.' );
+	}
+
+	public function test_resend_action_that_succeeds_immediately_returns_resent_and_marks_the_row_sent() {
+		$id = $this->insert_row( array( 'attempts' => 3 ) );
+
+		add_filter(
+			'euromail_backends',
+			function () {
+				return array( 'fake' => Euromail_Test_Fake_Backend::succeeding( 'msg-resend-1' ) );
+			}
+		);
+
+		$notice = $this->admin->process_log_row_action( 'resend', $id );
+
+		$this->assertSame( 'resent', $notice );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertSame( 'sent', $row['status'] );
+		$this->assertSame( 'msg-resend-1', $row['message_id'] );
+	}
+
+	public function test_resend_action_resets_attempts_to_zero_for_a_fresh_retry_budget() {
+		$id = $this->insert_row( array( 'attempts' => Euromail_Queue::MAX_ATTEMPTS ) );
+
+		add_filter(
+			'euromail_backends',
+			function () {
+				return array( 'fake' => Euromail_Test_Fake_Backend::failing( new Exception( 'still down' ) ) );
+			}
+		);
+
+		$notice = $this->admin->process_log_row_action( 'resend', $id );
+
+		// A retryable failure on attempt 1 of a fresh budget is put into
+		// 'queued', not immediately failed — proving attempts really was
+		// reset to 0, since the row started at MAX_ATTEMPTS (which would
+		// have gone straight to 'failed' otherwise).
+		$this->assertSame( 'resend_queued', $notice );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertSame( 'queued', $row['status'] );
+		$this->assertSame( 1, (int) $row['attempts'] );
+	}
+
+	public function test_resend_action_reuses_the_original_idempotency_key() {
+		$id           = $this->insert_row();
+		$original_row = Euromail_Logger::get( $id );
+		$original_key = $original_row['idempotency_key'];
+
+		add_filter(
+			'euromail_backends',
+			function () {
+				return array( 'fake' => Euromail_Test_Fake_Backend::succeeding( 'msg-resend-2' ) );
+			}
+		);
+
+		$this->admin->process_log_row_action( 'resend', $id );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertSame( $original_key, $row['idempotency_key'], 'A resend reuses the original idempotency key: if that send actually reached the server despite the recorded failure, same-key dedupe prevents a duplicate delivery.' );
+	}
+
+	public function test_resend_of_a_redacted_row_rehydrates_attachment_content_from_its_stored_path() {
+		$path = tempnam( sys_get_temp_dir(), 'euromail-admin-test-' );
+		file_put_contents( $path, 'attachment bytes' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+
+		$id = $this->insert_row(
+			array(
+				'payload' => wp_json_encode(
+					array(
+						'from'        => 'wordpress@example.com',
+						'from_name'   => 'WordPress',
+						'to'          => array( 'recipient@example.com' ),
+						'cc'          => array(),
+						'bcc'         => array(),
+						'reply_to'    => '',
+						'subject'     => 'Log action test',
+						'text_body'   => 'Body text',
+						'headers'     => array(),
+						// No 'content' key: a redacted failed-row payload,
+						// as euromail_store_body=on produces.
+						'attachments' => array(
+							array( 'filename' => 'file.txt', 'content_type' => 'text/plain', 'path' => $path ),
+						),
+					)
+				),
+			)
+		);
+
+		$backend = new Euromail_Test_Capturing_Backend( 'msg-resend-rehydrated' );
+		add_filter(
+			'euromail_backends',
+			function () use ( $backend ) {
+				return array( 'fake' => $backend );
+			}
+		);
+
+		$notice = $this->admin->process_log_row_action( 'resend', $id );
+
+		$this->assertSame( 'resent', $notice );
+		$this->assertSame(
+			base64_encode( 'attachment bytes' ),
+			$backend->captured_email['attachments'][0]['content'],
+			'A resend of a redacted payload must re-read the attachment from its stored path before sending.'
+		);
+
+		unlink( $path );
+	}
+
+	public function test_resend_is_refused_with_a_named_error_when_an_attachment_file_is_gone() {
+		$missing_path = sys_get_temp_dir() . '/euromail-admin-test-missing-' . wp_generate_uuid4() . '.txt';
+
+		$id = $this->insert_row(
+			array(
+				'payload' => wp_json_encode(
+					array(
+						'from'        => 'wordpress@example.com',
+						'from_name'   => 'WordPress',
+						'to'          => array( 'recipient@example.com' ),
+						'cc'          => array(),
+						'bcc'         => array(),
+						'reply_to'    => '',
+						'subject'     => 'Log action test',
+						'text_body'   => 'Body text',
+						'headers'     => array(),
+						'attachments' => array(
+							array( 'filename' => 'gone.txt', 'content_type' => 'text/plain', 'path' => $missing_path ),
+						),
+					)
+				),
+			)
+		);
+
+		add_filter(
+			'euromail_backends',
+			function () {
+				return array( 'fake' => Euromail_Test_Fake_Backend::succeeding( 'msg-should-not-happen' ) );
+			}
+		);
+
+		$notice = $this->admin->process_log_row_action( 'resend', $id );
+
+		$this->assertSame( 'resend_missing_attachment', $notice );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertSame( 'failed', $row['status'], 'A resend refused for a missing attachment must leave the row exactly as it was, not silently send without the attachment.' );
 	}
 }

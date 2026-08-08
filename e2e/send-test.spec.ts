@@ -14,6 +14,8 @@ test( 'the Send Test page delivers through the mock API with the expected payloa
 	await login( page );
 
 	await page.goto( '/wp-admin/admin.php?page=euromail' );
+	await page.selectOption( '#euromail_backend', 'api' );
+	await page.uncheck( '#euromail_force_from_enabled' );
 	await page.fill( '#euromail_api_key', 'em_live_e2etest' );
 	await page.click( 'input[name="euromail_settings_submit"]' );
 	await page.waitForLoadState( 'networkidle' );

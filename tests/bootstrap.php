@@ -29,9 +29,12 @@ tests_add_filter( 'muplugins_loaded', '_euromail_manually_load_plugin' );
 // Start up the WP testing environment.
 require $_tests_dir . '/includes/bootstrap.php';
 
-// The plugin only loads its admin-only class when is_admin() is true (a
+// The plugin only loads its admin-only classes when is_admin() is true (a
 // deliberate perf optimization for real requests), which the PHPUnit CLI
-// context never is. Load it directly so admin tests can reach it.
+// context never is. Load them directly so admin tests can reach them.
 if ( ! class_exists( 'Euromail_Admin' ) ) {
 	require_once dirname( __DIR__ ) . '/includes/class-euromail-admin.php';
+}
+if ( ! class_exists( 'Euromail_Log_Table' ) ) {
+	require_once dirname( __DIR__ ) . '/includes/class-euromail-log-table.php';
 }

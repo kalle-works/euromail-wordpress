@@ -10,7 +10,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Hooked onto the `pre_wp_mail` filter.
+ * Hooked onto the `pre_wp_mail` filter. Also used directly by Euromail_Queue
+ * to retry a previously-queued send.
  */
 class Euromail_Mailer {
 
@@ -36,18 +37,22 @@ class Euromail_Mailer {
 			return false;
 		}
 
-		$backends = $this->get_backends();
-
-		if ( empty( $backends ) ) {
+		if ( empty( $this->get_backends() ) ) {
 			// Configured, but no backend is able to send (e.g. the SDK is
-			// not installed yet). Fall back to core wp_mail() rather than
-			// silently failing every send.
+			// not installed yet, or SMTP is selected but not configured).
+			// Fall back to core wp_mail() rather than silently failing.
 			return null;
 		}
 
 		$idempotency_key = wp_generate_uuid4();
-		$store_body      = (bool) Euromail_Settings::get( 'euromail_store_body' );
 
+		// Stored WITH attachment content while the row is non-terminal
+		// (sending/queued): a later retry needs the actual bytes, since the
+		// original request's temp attachment files are typically gone by
+		// then. Content is stripped (or the whole payload nulled, per
+		// euromail_store_body) once the row reaches a terminal state —
+		// 'sent' or 'failed' alike, so a failure never keeps message
+		// content around that the setting promised not to store.
 		$log_id = Euromail_Logger::create(
 			array(
 				'status'          => 'sending',
@@ -55,51 +60,160 @@ class Euromail_Mailer {
 				'mail_from'       => $email['from'],
 				'mail_to'         => implode( ', ', $email['to'] ),
 				'subject'         => $email['subject'],
-				'payload'         => wp_json_encode( $this->redact_payload( $email ) ),
+				'payload'         => wp_json_encode( $email ),
 			)
 		);
 
-		$last_error = '';
+		$result = $this->attempt_send( $email, $idempotency_key );
+
+		if ( $result['success'] ) {
+			self::finalize_log(
+				$log_id,
+				'sent',
+				$email,
+				array(
+					'backend'    => $result['backend'],
+					'message_id' => $result['message_id'],
+					'attempts'   => 1,
+				)
+			);
+
+			do_action( 'wp_mail_succeeded', $atts );
+
+			return true;
+		}
+
+		if ( $result['retryable'] && Euromail_Queue::MAX_ATTEMPTS > 1 ) {
+			$this->update_log(
+				$log_id,
+				array(
+					'status'          => 'queued',
+					'error'           => $result['error'],
+					'attempts'        => 1,
+					'next_attempt_at' => Euromail_Queue::next_attempt_at( 1, $result['retry_after'] ),
+				)
+			);
+		} else {
+			self::finalize_log(
+				$log_id,
+				'failed',
+				$email,
+				array(
+					'error'    => $result['error'],
+					'attempts' => 1,
+				)
+			);
+		}
+
+		do_action( 'wp_mail_failed', new WP_Error( 'euromail_send_failed', $result['error'] ) );
+
+		return false;
+	}
+
+	/**
+	 * Try every backend in the configured chain, in order, for one
+	 * canonical email. Shared by the initial pre_wp_mail() attempt and by
+	 * Euromail_Queue's retries, so both go through identical backend
+	 * selection and error classification.
+	 *
+	 * @param array  $email           Canonical email array.
+	 * @param string $idempotency_key Idempotency key (reused as-is across retries).
+	 * @return array{success: bool, backend: string|null, message_id: string|null, retryable: bool, error: string, retry_after: int|null}
+	 */
+	public function attempt_send( array $email, $idempotency_key ) {
+		$backends = $this->get_backends();
+
+		if ( empty( $backends ) ) {
+			return array(
+				'success'     => false,
+				'backend'     => null,
+				'message_id'  => null,
+				'retryable'   => true,
+				'error'       => 'no backend configured',
+				'retry_after' => null,
+			);
+		}
+
+		$last_error    = '';
+		$any_retryable = false;
+		$retry_after   = null;
 
 		foreach ( $backends as $name => $backend ) {
 			try {
 				$result = $backend->send( $email, $idempotency_key );
 
-				$this->update_log(
-					$log_id,
-					array(
-						'status'     => 'sent',
-						'backend'    => $name,
-						'message_id' => isset( $result['message_id'] ) ? $result['message_id'] : null,
-						'payload'    => $store_body ? wp_json_encode( $this->redact_payload( $email ) ) : null,
-						'attempts'   => 1,
-					)
+				return array(
+					'success'     => true,
+					'backend'     => $name,
+					'message_id'  => isset( $result['message_id'] ) ? $result['message_id'] : null,
+					'retryable'   => false,
+					'error'       => '',
+					'retry_after' => null,
 				);
-
-				do_action( 'wp_mail_succeeded', $atts );
-
-				return true;
 			} catch ( Throwable $e ) {
-				// A backend (or the SDK/HTTP layer beneath it) may throw
-				// anything, including Errors, not just Exceptions. wp_mail()
-				// must never fatal because of it.
+				// A backend (or the SDK/HTTP/SMTP layer beneath it) may
+				// throw anything, including Errors, not just Exceptions.
+				// wp_mail() must never fatal because of it.
 				$last_error = sprintf( '%s: %s %s', $name, $e->getCode(), $e->getMessage() );
+
+				// The chain is retryable overall if ANY attempt was, not
+				// just the last one tried: a retryable primary followed by
+				// a permanent fallback must still schedule a retry — the
+				// fallback's permanent failure doesn't undo the fact that
+				// trying again might reach the primary.
+				if ( self::is_retryable_exception( $e ) ) {
+					$any_retryable = true;
+
+					if ( null === $retry_after ) {
+						$retry_after = self::retry_after_from_exception( $e );
+					}
+				}
 			}
 		}
 
-		$this->update_log(
-			$log_id,
-			array(
-				'status'   => 'failed',
-				'error'    => $last_error,
-				'payload'  => $store_body ? wp_json_encode( $this->redact_payload( $email ) ) : null,
-				'attempts' => 1,
-			)
+		return array(
+			'success'     => false,
+			'backend'     => null,
+			'message_id'  => null,
+			'retryable'   => $any_retryable,
+			'error'       => $last_error,
+			'retry_after' => $retry_after,
 		);
+	}
 
-		do_action( 'wp_mail_failed', new WP_Error( 'euromail_send_failed', $last_error ) );
+	/**
+	 * Classify a Throwable from a backend as worth retrying or not.
+	 *
+	 * @param Throwable $e Exception/Error thrown by a backend's send().
+	 * @return bool
+	 */
+	public static function is_retryable_exception( Throwable $e ) {
+		if ( EUROMAIL_SDK_LOADED && $e instanceof EuroMail\Exceptions\EuroMailException ) {
+			return $e->isRetryable();
+		}
 
-		return false;
+		if ( $e instanceof Euromail_Smtp_Exception ) {
+			return $e->is_retryable();
+		}
+
+		// Unknown Throwable: default to retryable. A spurious retry costs
+		// little (idempotency prevents a duplicate send); silently giving
+		// up on a genuinely transient error does not.
+		return true;
+	}
+
+	/**
+	 * Extract a backend-provided "wait this long" hint, when there is one.
+	 *
+	 * @param Throwable $e Exception/Error thrown by a backend's send().
+	 * @return int|null
+	 */
+	private static function retry_after_from_exception( Throwable $e ) {
+		if ( EUROMAIL_SDK_LOADED && $e instanceof EuroMail\Exceptions\EuroMailException ) {
+			return $e->getRetryAfter();
+		}
+
+		return null;
 	}
 
 	/**
@@ -116,14 +230,44 @@ class Euromail_Mailer {
 	}
 
 	/**
+	 * Finalize a log row's transition to a terminal state ('sent' or
+	 * 'failed'), applying euromail_store_body exactly once: on keeps the
+	 * payload with attachment content stripped, off nulls it outright.
+	 * Both the initial pre_wp_mail() attempt and Euromail_Queue's own
+	 * terminal transitions call through here — this rule has already
+	 * regressed independently in each of those two call sites once
+	 * before, so it now lives in exactly one place.
+	 *
+	 * @param int    $log_id Row ID. A value <= 0 is a no-op, matching update_log().
+	 * @param string $status 'sent' or 'failed'.
+	 * @param array  $email  Canonical email array, for payload redaction.
+	 * @param array  $fields Additional column values for this transition (backend, message_id, attempts, error, next_attempt_at, ...). Must not set 'status' or 'payload'; those are always this method's own.
+	 */
+	public static function finalize_log( $log_id, $status, array $email, array $fields ) {
+		if ( $log_id <= 0 ) {
+			return;
+		}
+
+		$store_body = (bool) Euromail_Settings::get( 'euromail_store_body' );
+
+		$fields['status']  = $status;
+		$fields['payload'] = $store_body ? wp_json_encode( self::redact_payload_for_storage( $email ) ) : null;
+
+		Euromail_Logger::update( $log_id, $fields );
+	}
+
+	/**
 	 * Strip attachment content (base64) from a canonical email before it is
-	 * stored in the log table. Attachment bytes never touch the database;
-	 * filename/content_type/path/size are kept for debugging.
+	 * stored for an audited terminal-state row (sent or failed alike).
+	 * Attachment bytes never linger in the database once a row's outcome is
+	 * final; filename/content_type/path/size are kept for reference, and a
+	 * resend of a row with a 'path' still on disk re-reads the bytes from
+	 * there.
 	 *
 	 * @param array $email Canonical email array.
 	 * @return array
 	 */
-	private function redact_payload( array $email ) {
+	public static function redact_payload_for_storage( array $email ) {
 		if ( ! empty( $email['attachments'] ) ) {
 			$email['attachments'] = array_map(
 				function ( $attachment ) {
@@ -163,16 +307,35 @@ class Euromail_Mailer {
 	/**
 	 * Build the ordered list of send backends to try, keyed by name.
 	 *
-	 * Filterable via `euromail_backends` so tests (and, later, the SMTP
-	 * fallback) can inject or reorder backends without touching this class.
+	 * The primary backend is whichever `euromail_backend` selects ('api' or
+	 * 'smtp'); when `euromail_fallback_enabled` is on and the other backend
+	 * is configured, it's appended as a second attempt.
+	 *
+	 * Filterable via `euromail_backends` so tests — and the Send Test
+	 * page's backend-override radio — can inject or replace the chain
+	 * without touching this class.
 	 *
 	 * @return array<string, object> Backend name => object exposing send( array $email, string $idempotency_key ): array.
 	 */
 	private function get_backends() {
 		$backends = array();
+		$primary  = Euromail_Settings::get( 'euromail_backend' );
+		$fallback = (bool) Euromail_Settings::get( 'euromail_fallback_enabled' );
 
-		if ( 'api' === Euromail_Settings::get( 'euromail_backend' ) && class_exists( 'Euromail_Api_Backend' ) ) {
-			$backends['api'] = new Euromail_Api_Backend();
+		$order = ( 'smtp' === $primary ) ? array( 'smtp', 'api' ) : array( 'api', 'smtp' );
+
+		foreach ( $order as $index => $name ) {
+			$is_primary = ( 0 === $index );
+
+			if ( ! $is_primary && ! $fallback ) {
+				continue;
+			}
+
+			if ( 'api' === $name && Euromail_Settings::is_api_configured() && class_exists( 'Euromail_Api_Backend' ) ) {
+				$backends['api'] = new Euromail_Api_Backend();
+			} elseif ( 'smtp' === $name && Euromail_Settings::is_smtp_configured() && class_exists( 'Euromail_Smtp_Backend' ) ) {
+				$backends['smtp'] = new Euromail_Smtp_Backend();
+			}
 		}
 
 		/**

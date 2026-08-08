@@ -2,11 +2,20 @@
 	'use strict';
 
 	$( function () {
+		if ( typeof euromailAdmin === 'undefined' ) {
+			return;
+		}
+
+		initVerifyKeyButton();
+		initSmtpRelayPreset();
+	} );
+
+	function initVerifyKeyButton() {
 		var $button = $( '#euromail-verify-key' );
 		var $result = $( '#euromail-verify-result' );
 		var $apiKeyField = $( '#euromail_api_key' );
 
-		if ( ! $button.length || typeof euromailAdmin === 'undefined' ) {
+		if ( ! $button.length ) {
 			return;
 		}
 
@@ -43,5 +52,29 @@
 				$button.prop( 'disabled', false ).text( originalText );
 			} );
 		} );
-	} );
+	}
+
+	function initSmtpRelayPreset() {
+		var $button = $( '#euromail-smtp-relay-preset' );
+
+		if ( ! $button.length || ! euromailAdmin.relayPreset ) {
+			return;
+		}
+
+		$button.on( 'click', function () {
+			var preset = euromailAdmin.relayPreset;
+			var apiKey = $.trim( $( '#euromail_api_key' ).val() || '' );
+
+			$( '#euromail_smtp_host' ).val( preset.host );
+			$( '#euromail_smtp_port' ).val( preset.port );
+			$( '#euromail_smtp_encryption' ).val( preset.encryption );
+			$( '#euromail_smtp_auth' ).prop( 'checked', true );
+			$( '#euromail_smtp_username' ).val( preset.username );
+
+			var $password = $( '#euromail_smtp_password' );
+			if ( apiKey && ! $password.prop( 'disabled' ) ) {
+				$password.val( apiKey );
+			}
+		} );
+	}
 } )( jQuery );

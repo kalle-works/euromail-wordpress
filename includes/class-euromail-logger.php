@@ -101,4 +101,89 @@ class Euromail_Logger {
 
 		return $row ? $row : null;
 	}
+
+	/**
+	 * Permanently delete a log row.
+	 *
+	 * @param int $id Row ID.
+	 * @return bool
+	 */
+	public static function delete( $id ) {
+		global $wpdb;
+
+		return false !== $wpdb->delete( self::table_name(), array( 'id' => (int) $id ), array( '%d' ) );
+	}
+
+	/**
+	 * IDs of rows due for a retry attempt, oldest-touched first: a
+	 * 'queued' row whose next_attempt_at is due, OR a 'sending' row that
+	 * has been stuck there since before $stale_sending_before — its
+	 * worker crashed mid-send (a fatal error, a killed process, a server
+	 * restart) without ever reaching a terminal state or getting claimed
+	 * back to 'queued', so it would otherwise sit invisible forever.
+	 *
+	 * @param int    $limit                Maximum number of IDs to return.
+	 * @param string $now                  MySQL datetime to compare next_attempt_at against; defaults to now.
+	 * @param string $stale_sending_before MySQL datetime; a 'sending' row last touched at or before this is considered stale. Defaults to $now.
+	 * @return int[]
+	 */
+	public static function due_queue_ids( $limit, $now = null, $stale_sending_before = null ) {
+		global $wpdb;
+
+		if ( null === $now ) {
+			$now = current_time( 'mysql' );
+		}
+
+		if ( null === $stale_sending_before ) {
+			$stale_sending_before = $now;
+		}
+
+		$ids = $wpdb->get_col(
+			$wpdb->prepare(
+				'SELECT id FROM ' . self::table_name() . ' WHERE ( status = %s AND next_attempt_at <= %s ) OR ( status = %s AND updated_at <= %s ) ORDER BY updated_at ASC LIMIT %d',
+				'queued',
+				$now,
+				'sending',
+				$stale_sending_before,
+				(int) $limit
+			)
+		);
+
+		return array_map( 'intval', $ids );
+	}
+
+	/**
+	 * Atomically claim a row for processing by flipping its status to
+	 * 'sending': either a 'queued' row (the normal case), or a 'sending'
+	 * row that has been stale since before $stale_sending_before (a
+	 * crashed worker's abandoned claim, reclaimed by a later run). Only
+	 * one concurrent caller can win this for a given row — the UPDATE's
+	 * WHERE clause is re-checked against the row's current committed
+	 * state, so a second caller (an overlapping cron run, a manual
+	 * `wp cron event run` racing the schedule, another process that
+	 * reclaimed this same stale row microseconds earlier) affects zero
+	 * rows and knows to back off.
+	 *
+	 * @param int         $id                   Row ID.
+	 * @param string|null $stale_sending_before MySQL datetime; a 'sending' row last touched at or before this may be reclaimed. Defaults to now.
+	 * @return bool True if this call claimed the row.
+	 */
+	public static function claim_for_retry( $id, $stale_sending_before = null ) {
+		global $wpdb;
+
+		if ( null === $stale_sending_before ) {
+			$stale_sending_before = current_time( 'mysql' );
+		}
+
+		$affected = $wpdb->query(
+			$wpdb->prepare(
+				'UPDATE ' . self::table_name() . " SET status = 'sending', updated_at = %s WHERE id = %d AND ( status = 'queued' OR ( status = 'sending' AND updated_at <= %s ) )",
+				current_time( 'mysql' ),
+				(int) $id,
+				$stale_sending_before
+			)
+		);
+
+		return 1 === $affected;
+	}
 }
