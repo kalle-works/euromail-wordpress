@@ -45,6 +45,7 @@ require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-smtp-backend.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-email-normalizer.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-mailer.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-queue.php';
+require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-webhook-controller.php';
 
 if ( EUROMAIL_SDK_LOADED ) {
 	require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-wp-transport.php';
@@ -54,6 +55,7 @@ if ( EUROMAIL_SDK_LOADED ) {
 if ( is_admin() ) {
 	require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-admin.php';
 	require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-log-table.php';
+	require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-site-health.php';
 }
 
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-activator.php';

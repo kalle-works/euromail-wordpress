@@ -29,11 +29,21 @@ class Euromail_Plugin {
 		add_action( 'euromail_prune_logs', array( 'Euromail_Retention', 'prune' ) );
 		add_action( 'euromail_process_retry_queue', array( 'Euromail_Queue', 'process' ) );
 
+		// Registered unconditionally too: incoming webhook requests hit
+		// rest_api_init on the front end, never is_admin().
+		$webhook_controller = new Euromail_Webhook_Controller();
+		$webhook_controller->init();
+
 		$this->maybe_schedule_cron_events();
 
 		if ( is_admin() && class_exists( 'Euromail_Admin' ) ) {
 			$admin = new Euromail_Admin();
 			$admin->init();
+		}
+
+		if ( is_admin() && class_exists( 'Euromail_Site_Health' ) ) {
+			$site_health = new Euromail_Site_Health();
+			$site_health->init();
 		}
 	}
 
