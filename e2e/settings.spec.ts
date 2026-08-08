@@ -15,6 +15,7 @@ test.describe( 'Euromail settings page', () => {
 
 	test( 'a valid API key verifies successfully', async ( { page } ) => {
 		await page.goto( '/wp-admin/admin.php?page=euromail' );
+		await page.selectOption( '#euromail_backend', 'api' );
 
 		await page.fill( '#euromail_api_key', 'em_live_e2etest' );
 		await page.click( 'input[name="euromail_settings_submit"]' );
@@ -26,6 +27,7 @@ test.describe( 'Euromail settings page', () => {
 
 	test( 'an invalid API key fails verification', async ( { page } ) => {
 		await page.goto( '/wp-admin/admin.php?page=euromail' );
+		await page.selectOption( '#euromail_backend', 'api' );
 
 		await page.fill( '#euromail_api_key', 'em_live_wrongkey' );
 		await page.click( 'input[name="euromail_settings_submit"]' );
@@ -37,6 +39,7 @@ test.describe( 'Euromail settings page', () => {
 
 	test( 'typing a new valid key and clicking Verify without saving verifies the typed key', async ( { page } ) => {
 		await page.goto( '/wp-admin/admin.php?page=euromail' );
+		await page.selectOption( '#euromail_backend', 'api' );
 
 		// Establish a known "saved" state that is deliberately wrong, so a
 		// successful verification below can only be explained by the typed
