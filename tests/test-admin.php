@@ -76,7 +76,7 @@ class Test_Euromail_Admin_Settings_Save extends WP_UnitTestCase {
 			)
 		);
 
-		$this->assertFalse( get_option( 'euromail_force_from_enabled' ) );
+		$this->assertFalse( Euromail_Settings::get( 'euromail_force_from_enabled' ) );
 
 		$found = false;
 		foreach ( get_settings_errors( 'euromail_settings' ) as $error ) {
@@ -95,7 +95,7 @@ class Test_Euromail_Admin_Settings_Save extends WP_UnitTestCase {
 			)
 		);
 
-		$this->assertFalse( get_option( 'euromail_force_from_enabled' ) );
+		$this->assertFalse( Euromail_Settings::get( 'euromail_force_from_enabled' ) );
 	}
 
 	public function test_force_from_with_valid_email_is_saved_and_enabled() {
@@ -106,7 +106,7 @@ class Test_Euromail_Admin_Settings_Save extends WP_UnitTestCase {
 			)
 		);
 
-		$this->assertTrue( get_option( 'euromail_force_from_enabled' ) );
+		$this->assertTrue( Euromail_Settings::get( 'euromail_force_from_enabled' ) );
 		$this->assertSame( 'force@example.com', get_option( 'euromail_force_from_email' ) );
 	}
 }
@@ -217,5 +217,107 @@ class Test_Euromail_Admin_Verify_Key extends WP_Ajax_UnitTestCase {
 		}
 
 		$this->assertSame( 'em_live_saved', $seen_api_key );
+	}
+}
+
+class Test_Euromail_Admin_Log_Row_Actions extends WP_UnitTestCase {
+
+	private $admin;
+
+	public function set_up() {
+		parent::set_up();
+		$this->admin = new Euromail_Admin();
+	}
+
+	public function tear_down() {
+		remove_all_filters( 'euromail_backends' );
+		parent::tear_down();
+	}
+
+	private function insert_row( array $overrides = array() ) {
+		$defaults = array(
+			'status'          => 'failed',
+			'idempotency_key' => wp_generate_uuid4(),
+			'mail_to'         => 'recipient@example.com',
+			'subject'         => 'Log action test',
+			'payload'         => wp_json_encode(
+				array(
+					'from'        => 'wordpress@example.com',
+					'from_name'   => 'WordPress',
+					'to'          => array( 'recipient@example.com' ),
+					'cc'          => array(),
+					'bcc'         => array(),
+					'reply_to'    => '',
+					'subject'     => 'Log action test',
+					'text_body'   => 'Body text',
+					'headers'     => array(),
+					'attachments' => array(),
+				)
+			),
+		);
+
+		return Euromail_Logger::create( array_merge( $defaults, $overrides ) );
+	}
+
+	public function test_delete_action_removes_the_row_and_returns_the_deleted_notice() {
+		$id = $this->insert_row();
+
+		$notice = $this->admin->process_log_row_action( 'delete', $id );
+
+		$this->assertSame( 'deleted', $notice );
+		$this->assertNull( Euromail_Logger::get( $id ) );
+	}
+
+	public function test_resend_action_with_no_payload_returns_resend_failed_and_leaves_the_row_alone() {
+		$id = $this->insert_row( array( 'payload' => null ) );
+
+		$notice = $this->admin->process_log_row_action( 'resend', $id );
+
+		$this->assertSame( 'resend_failed', $notice );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertSame( 'failed', $row['status'], 'A resend that never had a payload to work with must not touch the row.' );
+	}
+
+	public function test_resend_action_that_succeeds_immediately_returns_resent_and_marks_the_row_sent() {
+		$id = $this->insert_row( array( 'attempts' => 3 ) );
+
+		add_filter(
+			'euromail_backends',
+			function () {
+				return array( 'fake' => Euromail_Test_Fake_Backend::succeeding( 'msg-resend-1' ) );
+			}
+		);
+
+		$notice = $this->admin->process_log_row_action( 'resend', $id );
+
+		$this->assertSame( 'resent', $notice );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertSame( 'sent', $row['status'] );
+		$this->assertSame( 'msg-resend-1', $row['message_id'] );
+	}
+
+	public function test_resend_action_resets_attempts_to_zero_for_a_fresh_retry_budget() {
+		$id = $this->insert_row( array( 'attempts' => Euromail_Queue::MAX_ATTEMPTS ) );
+
+		add_filter(
+			'euromail_backends',
+			function () {
+				return array( 'fake' => Euromail_Test_Fake_Backend::failing( new Exception( 'still down' ) ) );
+			}
+		);
+
+		$notice = $this->admin->process_log_row_action( 'resend', $id );
+
+		// A retryable failure on attempt 1 of a fresh budget is queued, not
+		// immediately failed — proving attempts really was reset to 0,
+		// since the row started at MAX_ATTEMPTS (which would have gone
+		// straight to 'failed' otherwise).
+		$this->assertSame( 'resend_queued', $notice );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertSame( 'queued', $row['status'] );
+		$this->assertSame( 1, (int) $row['attempts'] );
 	}
 }

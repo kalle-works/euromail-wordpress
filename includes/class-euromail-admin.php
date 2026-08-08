@@ -53,6 +53,15 @@ class Euromail_Admin {
 			'euromail-test',
 			array( $this, 'render_send_test_page' )
 		);
+
+		add_submenu_page(
+			'euromail',
+			__( 'Log', 'euromail' ),
+			__( 'Log', 'euromail' ),
+			'manage_options',
+			'euromail-log',
+			array( $this, 'render_log_page' )
+		);
 	}
 
 	/**
@@ -81,6 +90,12 @@ class Euromail_Admin {
 				'nonce'         => wp_create_nonce( 'euromail_verify_key' ),
 				'verifyingText' => __( 'Verifying…', 'euromail' ),
 				'verifyText'    => __( 'Verify key', 'euromail' ),
+				'relayPreset'   => array(
+					'host'       => 'smtp.euromail.dev',
+					'port'       => 587,
+					'encryption' => 'tls',
+					'username'   => 'apikey',
+				),
 			)
 		);
 	}
@@ -110,6 +125,14 @@ class Euromail_Admin {
 		$log_retention_days   = Euromail_Settings::get( 'euromail_log_retention_days' );
 		$store_body           = Euromail_Settings::get( 'euromail_store_body' );
 		$delete_on_uninstall  = Euromail_Settings::get( 'euromail_delete_data_on_uninstall' );
+		$backend              = Euromail_Settings::get( 'euromail_backend' );
+		$smtp_host            = Euromail_Settings::get( 'euromail_smtp_host' );
+		$smtp_port            = Euromail_Settings::get( 'euromail_smtp_port' );
+		$smtp_encryption      = Euromail_Settings::get( 'euromail_smtp_encryption' );
+		$smtp_auth            = Euromail_Settings::get( 'euromail_smtp_auth' );
+		$smtp_username        = Euromail_Settings::get( 'euromail_smtp_username' );
+		$smtp_password        = Euromail_Settings::get( 'euromail_smtp_password' );
+		$smtp_password_locked = defined( 'EUROMAIL_SMTP_PASSWORD' ) && '' !== EUROMAIL_SMTP_PASSWORD;
 
 		?>
 		<div class="wrap">
@@ -156,7 +179,7 @@ class Euromail_Admin {
 						<th scope="row"><?php esc_html_e( 'Force From address', 'euromail' ); ?></th>
 						<td>
 							<label>
-								<input type="checkbox" name="euromail_force_from_enabled" value="1" <?php checked( $force_from_enabled ); ?> />
+								<input type="checkbox" id="euromail_force_from_enabled" name="euromail_force_from_enabled" value="1" <?php checked( $force_from_enabled ); ?> />
 								<?php esc_html_e( 'Override the From address on every outgoing email', 'euromail' ); ?>
 							</label>
 						</td>
@@ -173,7 +196,7 @@ class Euromail_Admin {
 						<th scope="row"><?php esc_html_e( 'Transactional by default', 'euromail' ); ?></th>
 						<td>
 							<label>
-								<input type="checkbox" name="euromail_transactional_default" value="1" <?php checked( $transactional ); ?> />
+								<input type="checkbox" id="euromail_transactional_default" name="euromail_transactional_default" value="1" <?php checked( $transactional ); ?> />
 								<?php esc_html_e( 'Mark outgoing emails as transactional unless overridden', 'euromail' ); ?>
 							</label>
 						</td>
@@ -182,18 +205,80 @@ class Euromail_Admin {
 						<th scope="row"><?php esc_html_e( 'Open/click tracking by default', 'euromail' ); ?></th>
 						<td>
 							<label>
-								<input type="checkbox" name="euromail_tracking_default" value="1" <?php checked( $tracking ); ?> />
+								<input type="checkbox" id="euromail_tracking_default" name="euromail_tracking_default" value="1" <?php checked( $tracking ); ?> />
 								<?php esc_html_e( 'Track opens and clicks unless overridden', 'euromail' ); ?>
 							</label>
 						</td>
 					</tr>
 					<tr>
-						<th scope="row"><?php esc_html_e( 'SMTP fallback', 'euromail' ); ?></th>
+						<th scope="row"><label for="euromail_backend"><?php esc_html_e( 'Sending backend', 'euromail' ); ?></label></th>
+						<td>
+							<select id="euromail_backend" name="euromail_backend">
+								<option value="api" <?php selected( $backend, 'api' ); ?>><?php esc_html_e( 'Euromail API', 'euromail' ); ?></option>
+								<option value="smtp" <?php selected( $backend, 'smtp' ); ?>><?php esc_html_e( 'SMTP', 'euromail' ); ?></option>
+							</select>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Fallback', 'euromail' ); ?></th>
 						<td>
 							<label>
-								<input type="checkbox" name="euromail_fallback_enabled" value="1" <?php checked( $fallback_enabled ); ?> />
-								<?php esc_html_e( 'Fall back to SMTP when the API is unavailable (SMTP configuration arrives in a later release)', 'euromail' ); ?>
+								<input type="checkbox" id="euromail_fallback_enabled" name="euromail_fallback_enabled" value="1" <?php checked( $fallback_enabled ); ?> />
+								<?php esc_html_e( 'If the primary backend fails, automatically try the other one', 'euromail' ); ?>
 							</label>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'SMTP settings', 'euromail' ); ?></th>
+						<td>
+							<button type="button" class="button" id="euromail-smtp-relay-preset"><?php esc_html_e( 'Use Euromail SMTP relay', 'euromail' ); ?></button>
+							<p class="description"><?php esc_html_e( 'Fills in the host, port and encryption for euromail.dev’s own SMTP relay, and copies your API key into the password field below.', 'euromail' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><label for="euromail_smtp_host"><?php esc_html_e( 'SMTP host', 'euromail' ); ?></label></th>
+						<td><input type="text" id="euromail_smtp_host" name="euromail_smtp_host" value="<?php echo esc_attr( $smtp_host ); ?>" class="regular-text" /></td>
+					</tr>
+					<tr>
+						<th scope="row"><label for="euromail_smtp_port"><?php esc_html_e( 'SMTP port', 'euromail' ); ?></label></th>
+						<td><input type="number" min="1" max="65535" id="euromail_smtp_port" name="euromail_smtp_port" value="<?php echo esc_attr( $smtp_port ); ?>" class="small-text" /></td>
+					</tr>
+					<tr>
+						<th scope="row"><label for="euromail_smtp_encryption"><?php esc_html_e( 'SMTP encryption', 'euromail' ); ?></label></th>
+						<td>
+							<select id="euromail_smtp_encryption" name="euromail_smtp_encryption">
+								<option value="tls" <?php selected( $smtp_encryption, 'tls' ); ?>><?php esc_html_e( 'STARTTLS', 'euromail' ); ?></option>
+								<option value="ssl" <?php selected( $smtp_encryption, 'ssl' ); ?>><?php esc_html_e( 'SSL/TLS', 'euromail' ); ?></option>
+								<option value="none" <?php selected( $smtp_encryption, 'none' ); ?>><?php esc_html_e( 'None', 'euromail' ); ?></option>
+							</select>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'SMTP authentication', 'euromail' ); ?></th>
+						<td>
+							<label>
+								<input type="checkbox" id="euromail_smtp_auth" name="euromail_smtp_auth" value="1" <?php checked( $smtp_auth ); ?> />
+								<?php esc_html_e( 'This server requires a username and password', 'euromail' ); ?>
+							</label>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><label for="euromail_smtp_username"><?php esc_html_e( 'SMTP username', 'euromail' ); ?></label></th>
+						<td><input type="text" id="euromail_smtp_username" name="euromail_smtp_username" value="<?php echo esc_attr( $smtp_username ); ?>" class="regular-text" autocomplete="off" /></td>
+					</tr>
+					<tr>
+						<th scope="row"><label for="euromail_smtp_password"><?php esc_html_e( 'SMTP password', 'euromail' ); ?></label></th>
+						<td>
+							<input type="password"
+								id="euromail_smtp_password"
+								name="euromail_smtp_password"
+								value="<?php echo esc_attr( $smtp_password ); ?>"
+								class="regular-text"
+								autocomplete="off"
+								<?php disabled( $smtp_password_locked ); ?> />
+							<?php if ( $smtp_password_locked ) : ?>
+								<p class="description"><?php esc_html_e( 'Defined in wp-config.php.', 'euromail' ); ?></p>
+							<?php endif; ?>
 						</td>
 					</tr>
 					<tr>
@@ -204,7 +289,7 @@ class Euromail_Admin {
 						<th scope="row"><?php esc_html_e( 'Store message body', 'euromail' ); ?></th>
 						<td>
 							<label>
-								<input type="checkbox" name="euromail_store_body" value="1" <?php checked( $store_body ); ?> />
+								<input type="checkbox" id="euromail_store_body" name="euromail_store_body" value="1" <?php checked( $store_body ); ?> />
 								<?php esc_html_e( 'Keep the message payload in the log after a successful send', 'euromail' ); ?>
 							</label>
 						</td>
@@ -213,7 +298,7 @@ class Euromail_Admin {
 						<th scope="row"><?php esc_html_e( 'Delete data on uninstall', 'euromail' ); ?></th>
 						<td>
 							<label>
-								<input type="checkbox" name="euromail_delete_data_on_uninstall" value="1" <?php checked( $delete_on_uninstall ); ?> />
+								<input type="checkbox" id="euromail_delete_data_on_uninstall" name="euromail_delete_data_on_uninstall" value="1" <?php checked( $delete_on_uninstall ); ?> />
 								<?php esc_html_e( 'Remove the log table and settings when the plugin is uninstalled', 'euromail' ); ?>
 							</label>
 						</td>
@@ -262,7 +347,7 @@ class Euromail_Admin {
 			// Refuse to enable Force From with an empty/invalid address —
 			// the normalizer has its own defense against this, but the
 			// setting should never be saved in a broken state to begin with.
-			update_option( 'euromail_force_from_enabled', false );
+			update_option( 'euromail_force_from_enabled', '0' );
 			add_settings_error(
 				'euromail_settings',
 				'euromail_force_from_invalid',
@@ -270,7 +355,7 @@ class Euromail_Admin {
 				'error'
 			);
 		} else {
-			update_option( 'euromail_force_from_enabled', $force_from_enabled );
+			update_option( 'euromail_force_from_enabled', self::bool_option( $force_from_enabled ) );
 			update_option( 'euromail_force_from_email', $force_from_email );
 		}
 
@@ -278,17 +363,61 @@ class Euromail_Admin {
 			'euromail_force_from_name',
 			isset( $_POST['euromail_force_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['euromail_force_from_name'] ) ) : ''
 		);
-		update_option( 'euromail_transactional_default', isset( $_POST['euromail_transactional_default'] ) );
-		update_option( 'euromail_tracking_default', isset( $_POST['euromail_tracking_default'] ) );
-		update_option( 'euromail_fallback_enabled', isset( $_POST['euromail_fallback_enabled'] ) );
+		update_option( 'euromail_transactional_default', self::bool_option( isset( $_POST['euromail_transactional_default'] ) ) );
+		update_option( 'euromail_tracking_default', self::bool_option( isset( $_POST['euromail_tracking_default'] ) ) );
+		update_option( 'euromail_fallback_enabled', self::bool_option( isset( $_POST['euromail_fallback_enabled'] ) ) );
+
+		$backend = isset( $_POST['euromail_backend'] ) ? sanitize_text_field( wp_unslash( $_POST['euromail_backend'] ) ) : 'api';
+		update_option( 'euromail_backend', in_array( $backend, array( 'api', 'smtp' ), true ) ? $backend : 'api' );
+
+		update_option(
+			'euromail_smtp_host',
+			isset( $_POST['euromail_smtp_host'] ) ? sanitize_text_field( wp_unslash( $_POST['euromail_smtp_host'] ) ) : ''
+		);
+		update_option(
+			'euromail_smtp_port',
+			isset( $_POST['euromail_smtp_port'] ) ? absint( $_POST['euromail_smtp_port'] ) : 587
+		);
+
+		$encryption = isset( $_POST['euromail_smtp_encryption'] ) ? sanitize_text_field( wp_unslash( $_POST['euromail_smtp_encryption'] ) ) : 'tls';
+		update_option( 'euromail_smtp_encryption', in_array( $encryption, array( 'tls', 'ssl', 'none' ), true ) ? $encryption : 'tls' );
+
+		update_option( 'euromail_smtp_auth', self::bool_option( isset( $_POST['euromail_smtp_auth'] ) ) );
+		update_option(
+			'euromail_smtp_username',
+			isset( $_POST['euromail_smtp_username'] ) ? sanitize_text_field( wp_unslash( $_POST['euromail_smtp_username'] ) ) : ''
+		);
+
+		if ( ! defined( 'EUROMAIL_SMTP_PASSWORD' ) || '' === EUROMAIL_SMTP_PASSWORD ) {
+			update_option(
+				'euromail_smtp_password',
+				isset( $_POST['euromail_smtp_password'] ) ? sanitize_text_field( wp_unslash( $_POST['euromail_smtp_password'] ) ) : ''
+			);
+		}
+
 		update_option(
 			'euromail_log_retention_days',
 			isset( $_POST['euromail_log_retention_days'] ) ? absint( $_POST['euromail_log_retention_days'] ) : 30
 		);
-		update_option( 'euromail_store_body', isset( $_POST['euromail_store_body'] ) );
-		update_option( 'euromail_delete_data_on_uninstall', isset( $_POST['euromail_delete_data_on_uninstall'] ) );
+		update_option( 'euromail_store_body', self::bool_option( isset( $_POST['euromail_store_body'] ) ) );
+		update_option( 'euromail_delete_data_on_uninstall', self::bool_option( isset( $_POST['euromail_delete_data_on_uninstall'] ) ) );
 
 		add_settings_error( 'euromail_settings', 'euromail_settings_saved', __( 'Settings saved.', 'euromail' ), 'updated' );
+	}
+
+	/**
+	 * Convert a boolean to the '1'/'0' string WordPress reliably persists
+	 * and retrieves. Storing a raw PHP `false` via update_option() is not
+	 * safe: WordPress's options cache can end up treating it the same as
+	 * "option not set" within the same request, silently falling back to
+	 * whatever default get_option() was called with instead of the value
+	 * actually saved. Euromail_Settings::get() casts back to a real bool.
+	 *
+	 * @param bool $value Value to persist.
+	 * @return string
+	 */
+	private static function bool_option( $value ) {
+		return $value ? '1' : '0';
 	}
 
 	/**
@@ -492,5 +621,149 @@ class Euromail_Admin {
 			'success' => true,
 			'log_id'  => $log_id,
 		);
+	}
+
+	/**
+	 * Render the Log page: a WP_List_Table of delivery attempts, with
+	 * Resend/Delete row actions and a bulk Delete action.
+	 */
+	public function render_log_page() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		$this->maybe_handle_log_row_action();
+
+		$table = new Euromail_Log_Table();
+		$table->prepare_items();
+
+		?>
+		<div class="wrap">
+			<h1><?php esc_html_e( 'Euromail Log', 'euromail' ); ?></h1>
+
+			<?php $this->render_log_notice(); ?>
+
+			<form method="get">
+				<input type="hidden" name="page" value="euromail-log" />
+				<?php $table->search_box( __( 'Search', 'euromail' ), 'euromail-log-search' ); ?>
+				<?php $table->display(); ?>
+			</form>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Print a notice for the outcome of a just-completed row action, based
+	 * on the `euromail_log_notice` query var set by the post-action
+	 * redirect in maybe_handle_log_row_action().
+	 */
+	private function render_log_notice() {
+		if ( ! isset( $_GET['euromail_log_notice'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			return;
+		}
+
+		$notice = sanitize_text_field( wp_unslash( $_GET['euromail_log_notice'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+
+		$messages = array(
+			'deleted'       => array( 'success', __( 'Log entry deleted.', 'euromail' ) ),
+			'resent'        => array( 'success', __( 'Email resent successfully.', 'euromail' ) ),
+			'resend_queued' => array( 'success', __( 'Resend queued; it will retry automatically if it does not go out immediately.', 'euromail' ) ),
+			'resend_failed' => array( 'error', __( 'Could not resend this email — it has no stored payload to resend.', 'euromail' ) ),
+		);
+
+		if ( ! isset( $messages[ $notice ] ) ) {
+			return;
+		}
+
+		list( $type, $text ) = $messages[ $notice ];
+
+		printf( '<div class="notice notice-%1$s is-dismissible"><p>%2$s</p></div>', esc_attr( $type ), esc_html( $text ) );
+	}
+
+	/**
+	 * Handle a Resend or Delete row action link, then redirect back to a
+	 * clean log page URL (so reloading the page never repeats the action).
+	 */
+	private function maybe_handle_log_row_action() {
+		if ( ! isset( $_GET['action'], $_GET['id'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			return;
+		}
+
+		$action = sanitize_text_field( wp_unslash( $_GET['action'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$id     = absint( $_GET['id'] );
+
+		if ( ! in_array( $action, array( 'resend', 'delete' ), true ) || $id <= 0 ) {
+			return;
+		}
+
+		check_admin_referer( 'euromail_log_action_' . $id );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		$notice = $this->process_log_row_action( $action, $id );
+
+		wp_safe_redirect(
+			add_query_arg(
+				array(
+					'page'                => 'euromail-log',
+					'euromail_log_notice' => $notice,
+				),
+				admin_url( 'admin.php' )
+			)
+		);
+		exit;
+	}
+
+	/**
+	 * Perform a Resend or Delete row action and return the notice key for
+	 * it. Split out from maybe_handle_log_row_action() so the actual
+	 * behavior is testable without also triggering its redirect + exit.
+	 *
+	 * @param string $action 'resend' or 'delete'.
+	 * @param int    $id     Log row ID.
+	 * @return string Notice key: 'deleted', 'resent', 'resend_queued', or 'resend_failed'.
+	 */
+	public function process_log_row_action( $action, $id ) {
+		if ( 'delete' === $action ) {
+			Euromail_Logger::delete( $id );
+			return 'deleted';
+		}
+
+		return $this->resend_log_row( $id );
+	}
+
+	/**
+	 * Re-queue a log row for an immediate retry attempt: resets attempts to
+	 * 0 (a manual resend gets a fresh full retry budget) and processes it
+	 * synchronously so the admin gets an immediate result instead of
+	 * waiting for the next cron tick.
+	 *
+	 * @param int $id Log row ID.
+	 * @return string Notice key: 'resent', 'resend_queued', or 'resend_failed'.
+	 */
+	private function resend_log_row( $id ) {
+		$row = Euromail_Logger::get( $id );
+
+		if ( ! $row || empty( $row['payload'] ) ) {
+			return 'resend_failed';
+		}
+
+		Euromail_Logger::update(
+			$id,
+			array(
+				'status'          => 'queued',
+				'attempts'        => 0,
+				'error'           => null,
+				'next_attempt_at' => current_time( 'mysql' ),
+			)
+		);
+
+		Euromail_Queue::process_row( $id );
+
+		$row = Euromail_Logger::get( $id );
+
+		return ( $row && 'sent' === $row['status'] ) ? 'resent' : 'resend_queued';
 	}
 }
