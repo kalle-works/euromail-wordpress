@@ -38,3 +38,6 @@ if ( ! class_exists( 'Euromail_Admin' ) ) {
 if ( ! class_exists( 'Euromail_Log_Table' ) ) {
 	require_once dirname( __DIR__ ) . '/includes/class-euromail-log-table.php';
 }
+if ( ! class_exists( 'Euromail_Site_Health' ) ) {
+	require_once dirname( __DIR__ ) . '/includes/class-euromail-site-health.php';
+}
