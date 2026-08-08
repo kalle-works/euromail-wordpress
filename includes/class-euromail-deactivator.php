@@ -21,5 +21,6 @@ class Euromail_Deactivator {
 	 */
 	public static function deactivate() {
 		wp_clear_scheduled_hook( 'euromail_retry_failed_emails' );
+		wp_clear_scheduled_hook( 'euromail_prune_logs' );
 	}
 }

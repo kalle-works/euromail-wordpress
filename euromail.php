@@ -39,6 +39,7 @@ define( 'EUROMAIL_SDK_LOADED', interface_exists( 'EuroMail\\Http\\TransportInter
 
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-settings.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-logger.php';
+require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-retention.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-email-normalizer.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-mailer.php';
 

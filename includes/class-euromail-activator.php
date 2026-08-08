@@ -27,6 +27,16 @@ class Euromail_Activator {
 	public static function activate() {
 		self::create_log_table();
 		update_option( 'euromail_db_version', self::DB_VERSION );
+		self::schedule_retention_pruning();
+	}
+
+	/**
+	 * Schedule the daily log-retention pruning cron event, if not already scheduled.
+	 */
+	private static function schedule_retention_pruning() {
+		if ( ! wp_next_scheduled( 'euromail_prune_logs' ) ) {
+			wp_schedule_event( time(), 'daily', 'euromail_prune_logs' );
+		}
 	}
 
 	/**
