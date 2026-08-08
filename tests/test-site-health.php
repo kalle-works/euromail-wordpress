@@ -12,6 +12,14 @@
  * - SMTP backend selected but incomplete: 'critical'.
  * - SMTP backend selected and complete: 'good' (no live connection
  *   attempted — completeness alone is the bar for SMTP).
+ * - The registered `wp_ajax_health-check-{slug}` hook name equals exactly
+ *   what core's own site-health.js computes from the registered test slug
+ *   (`'health-check-' + test.replace('_', '-')`, a non-global replace) —
+ *   otherwise the async test's AJAX request has no matching handler.
+ * - The registered test carries a callable `async_direct_test`, so
+ *   WP_Site_Health's own weekly `wp_site_health_scheduled_check` cron can
+ *   invoke it directly instead of only ever running via the admin's async
+ *   AJAX request.
  *
  * @package Euromail
  */
@@ -139,6 +147,64 @@ class Test_Euromail_Site_Health extends WP_UnitTestCase {
 		update_option( 'euromail_smtp_auth', '0' );
 
 		$result = $this->site_health->run_test();
+
+		$this->assertSame( 'good', $result['status'] );
+	}
+
+	/**
+	 * Reproduce core's own site-health.js computation
+	 * (`'health-check-' + this.test.replace( '_', '-' )`, a non-global
+	 * replace — only the FIRST underscore becomes a hyphen) against the
+	 * plugin's actually-registered test slug, and assert it equals the
+	 * actually-registered wp_ajax_ hook name. A slug containing more than
+	 * one underscore (or one at all, positioned such that the replace
+	 * doesn't fully normalize it) would make these diverge.
+	 */
+	public function test_registered_ajax_hook_matches_what_core_site_health_js_computes_from_the_slug() {
+		$this->site_health->init(); // The wp_ajax_ hook is registered by init(), not register_test().
+
+		$tests = $this->site_health->register_test( array() );
+		$slug  = $tests['async'][ Euromail_Site_Health::SLUG ]['test'];
+
+		// This is deliberately not global (no 'g'-equivalent): PHP's
+		// substr_replace-of-first-occurrence, matching JS's non-global
+		// String.prototype.replace( '_', '-' ) exactly.
+		$first_underscore  = strpos( $slug, '_' );
+		$js_computed_slug  = false !== $first_underscore
+			? substr_replace( $slug, '-', $first_underscore, 1 )
+			: $slug;
+		$js_computed_action = 'health-check-' . $js_computed_slug;
+
+		$this->assertSame(
+			10,
+			has_action( 'wp_ajax_' . $js_computed_action, array( $this->site_health, 'ajax_run_test' ) ),
+			'The hook actually registered must match exactly what core\'s site-health.js computes as the AJAX action name from the registered test slug.'
+		);
+	}
+
+	public function test_the_test_slug_itself_contains_no_underscores() {
+		// Belt-and-suspenders on top of the JS-parity test above: with NO
+		// underscores at all, core's replace('_','-') is unconditionally a
+		// no-op, so this can never regress regardless of what the slug's
+		// exact spelling is.
+		$this->assertStringNotContainsString( '_', Euromail_Site_Health::SLUG );
+	}
+
+	public function test_registration_carries_a_callable_async_direct_test_for_the_weekly_cron() {
+		$tests = $this->site_health->register_test( array() );
+		$test  = $tests['async'][ Euromail_Site_Health::SLUG ];
+
+		$this->assertArrayHasKey( 'async_direct_test', $test );
+		$this->assertIsCallable( $test['async_direct_test'], 'WP_Site_Health\'s weekly wp_site_health_scheduled_check cron calls this directly as a plain callable.' );
+	}
+
+	public function test_async_direct_test_callable_returns_the_same_shape_as_run_test() {
+		update_option( 'euromail_backend', 'api' );
+		update_option( 'euromail_api_key', 'em_live_test' );
+		add_filter( 'euromail_site_health_client', $this->fake_client_filter( Euromail_Test_Site_Health_Account_Resource::succeeding() ) );
+
+		$tests  = $this->site_health->register_test( array() );
+		$result = call_user_func( $tests['async'][ Euromail_Site_Health::SLUG ]['async_direct_test'] );
 
 		$this->assertSame( 'good', $result['status'] );
 	}
