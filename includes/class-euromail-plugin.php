@@ -29,12 +29,42 @@ class Euromail_Plugin {
 		add_action( 'euromail_prune_logs', array( 'Euromail_Retention', 'prune' ) );
 		add_action( 'euromail_process_retry_queue', array( 'Euromail_Queue', 'process' ) );
 
+		// Registered unconditionally too: incoming webhook requests hit
+		// rest_api_init on the front end, never is_admin().
+		$webhook_controller = new Euromail_Webhook_Controller();
+		$webhook_controller->init();
+
+		$this->maybe_upgrade_database();
 		$this->maybe_schedule_cron_events();
 
 		if ( is_admin() && class_exists( 'Euromail_Admin' ) ) {
 			$admin = new Euromail_Admin();
 			$admin->init();
 		}
+
+		if ( is_admin() && class_exists( 'Euromail_Site_Health' ) ) {
+			$site_health = new Euromail_Site_Health();
+			$site_health->init();
+		}
+	}
+
+	/**
+	 * Apply pending database schema changes on a normal request. The
+	 * activation hook does not fire when the plugin is updated in place,
+	 * so a schema change shipped in an update (e.g. the api_id column in
+	 * 1.1.0) would otherwise never reach existing installs — and because
+	 * Euromail_Logger::create() fails gracefully, every log insert would
+	 * break silently: no log rows, no retries, no webhook matching.
+	 * dbDelta() is idempotent, and the version comparison keeps this to a
+	 * single option read on the hot path.
+	 */
+	private function maybe_upgrade_database() {
+		if ( get_option( 'euromail_db_version' ) === Euromail_Activator::DB_VERSION ) {
+			return;
+		}
+
+		Euromail_Activator::create_log_table();
+		update_option( 'euromail_db_version', Euromail_Activator::DB_VERSION );
 	}
 
 	/**

@@ -482,3 +482,272 @@ class Test_Euromail_Admin_Log_Row_Actions extends WP_UnitTestCase {
 		$this->assertSame( 'failed', $row['status'], 'A resend refused for a missing attachment must leave the row exactly as it was, not silently send without the attachment.' );
 	}
 }
+
+/**
+ * Minimal fake of the SDK's Client, only exposing what
+ * Euromail_Admin::refresh_status_from_api() touches (->emails->get($id)).
+ */
+class Euromail_Test_Fake_Email_Details {
+
+	public $status;
+	public $events;
+
+	public function __construct( $status, array $events ) {
+		$this->status = $status;
+		$this->events = $events;
+	}
+}
+
+class Euromail_Test_Fake_Emails_Resource {
+
+	private $details;
+	private $exception;
+
+	public static function returning( Euromail_Test_Fake_Email_Details $details ) {
+		$resource          = new self();
+		$resource->details = $details;
+		return $resource;
+	}
+
+	public static function failing( Throwable $exception ) {
+		$resource            = new self();
+		$resource->exception = $exception;
+		return $resource;
+	}
+
+	public function get( $id ) {
+		if ( null !== $this->exception ) {
+			throw $this->exception;
+		}
+
+		return $this->details;
+	}
+}
+
+class Euromail_Test_Fake_Emails_Client {
+
+	public $emails;
+
+	public function __construct( Euromail_Test_Fake_Emails_Resource $resource ) {
+		$this->emails = $resource;
+	}
+}
+
+class Test_Euromail_Admin_Refresh_Status extends WP_UnitTestCase {
+
+	private $admin;
+
+	public function set_up() {
+		parent::set_up();
+		update_option( 'euromail_api_key', 'em_live_test' );
+		$this->admin = new Euromail_Admin();
+	}
+
+	public function tear_down() {
+		delete_option( 'euromail_api_key' );
+		remove_all_filters( 'euromail_refresh_status_client' );
+		parent::tear_down();
+	}
+
+	private function insert_row( array $overrides = array() ) {
+		$defaults = array(
+			'status'          => 'sent',
+			'backend'         => 'api',
+			'api_id'          => 'api-uuid-123',
+			'idempotency_key' => wp_generate_uuid4(),
+			'mail_to'         => 'recipient@example.com',
+			'subject'         => 'Refresh status test',
+		);
+
+		return Euromail_Logger::create( array_merge( $defaults, $overrides ) );
+	}
+
+	public function test_refreshes_status_and_events_from_the_api() {
+		$id = $this->insert_row( array( 'status' => 'sent' ) );
+
+		add_filter(
+			'euromail_refresh_status_client',
+			function () {
+				return new Euromail_Test_Fake_Emails_Client(
+					Euromail_Test_Fake_Emails_Resource::returning(
+						new Euromail_Test_Fake_Email_Details(
+							'delivered',
+							array( array( 'type' => 'delivered', 'timestamp' => '2026-01-01T00:00:00Z' ) )
+						)
+					)
+				);
+			}
+		);
+
+		$notice = $this->admin->refresh_status_from_api( $id );
+
+		$this->assertSame( 'refreshed', $notice );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertSame( 'delivered', $row['status'] );
+
+		$events = json_decode( $row['events'], true );
+		$this->assertCount( 1, $events );
+		$this->assertSame( 'delivered', $events[0]['type'] );
+	}
+
+	public function test_refresh_is_not_available_for_a_row_not_sent_through_the_api() {
+		$id = $this->insert_row(
+			array(
+				'backend' => 'smtp',
+				'api_id'  => null,
+			)
+		);
+
+		$notice = $this->admin->refresh_status_from_api( $id );
+
+		$this->assertSame( 'refresh_not_available', $notice );
+	}
+
+	public function test_refresh_failed_when_the_sdk_call_throws_and_leaves_the_row_untouched() {
+		$id = $this->insert_row();
+
+		add_filter(
+			'euromail_refresh_status_client',
+			function () {
+				return new Euromail_Test_Fake_Emails_Client(
+					Euromail_Test_Fake_Emails_Resource::failing( new Exception( 'network error' ) )
+				);
+			}
+		);
+
+		$before = Euromail_Logger::get( $id );
+		$notice = $this->admin->refresh_status_from_api( $id );
+
+		$this->assertSame( 'refresh_failed', $notice );
+		$this->assertSame( $before, Euromail_Logger::get( $id ), 'A failed refresh must leave the row untouched.' );
+	}
+
+	// -- Refresh must obey the same promotion rules as the webhook receiver --
+
+	private function fake_client_returning( $status, array $events ) {
+		return function () use ( $status, $events ) {
+			return new Euromail_Test_Fake_Emails_Client(
+				Euromail_Test_Fake_Emails_Resource::returning( new Euromail_Test_Fake_Email_Details( $status, $events ) )
+			);
+		};
+	}
+
+	public function test_refresh_does_not_demote_a_higher_local_status() {
+		$id = $this->insert_row( array( 'status' => 'opened' ) );
+
+		add_filter( 'euromail_refresh_status_client', $this->fake_client_returning( 'delivered', array() ) );
+
+		$this->admin->refresh_status_from_api( $id );
+
+		$this->assertSame( 'opened', Euromail_Logger::get( $id )['status'], 'The API reporting a lower-ranked status must not demote a row already further along.' );
+	}
+
+	public function test_refresh_never_overwrites_a_bounced_status() {
+		$id = $this->insert_row( array( 'status' => 'bounced' ) );
+
+		add_filter( 'euromail_refresh_status_client', $this->fake_client_returning( 'delivered', array() ) );
+
+		$this->admin->refresh_status_from_api( $id );
+
+		$this->assertSame( 'bounced', Euromail_Logger::get( $id )['status'], 'bounced is permanent — the API reporting anything else must not overwrite it.' );
+	}
+
+	public function test_refresh_ignores_an_unrecognized_api_status() {
+		$id = $this->insert_row( array( 'status' => 'sent' ) );
+
+		add_filter( 'euromail_refresh_status_client', $this->fake_client_returning( 'some-future-status', array() ) );
+
+		$this->admin->refresh_status_from_api( $id );
+
+		$this->assertSame( 'sent', Euromail_Logger::get( $id )['status'], 'An unrecognized status from the API must be ignored, not applied verbatim.' );
+	}
+
+	public function test_a_local_bounced_event_survives_a_refresh_whose_api_response_has_empty_events() {
+		$id = $this->insert_row(
+			array(
+				'status' => 'bounced',
+				'events' => wp_json_encode(
+					array(
+						array( 'type' => 'bounced', 'timestamp' => '2026-01-01T00:00:00Z' ),
+					)
+				),
+			)
+		);
+
+		add_filter( 'euromail_refresh_status_client', $this->fake_client_returning( 'bounced', array() ) );
+
+		$notice = $this->admin->refresh_status_from_api( $id );
+
+		$this->assertSame( 'refreshed', $notice );
+
+		$events = json_decode( Euromail_Logger::get( $id )['events'], true );
+		$this->assertCount( 1, $events, 'The webhook-recorded local event must survive a refresh whose API response has no events at all.' );
+		$this->assertSame( 'bounced', $events[0]['type'] );
+	}
+
+	public function test_refresh_merges_new_api_events_with_existing_local_events_without_duplicating() {
+		$id = $this->insert_row(
+			array(
+				'status' => 'sent',
+				'events' => wp_json_encode(
+					array(
+						array( 'type' => 'sent', 'timestamp' => '2026-01-01T00:00:00Z' ),
+					)
+				),
+			)
+		);
+
+		add_filter(
+			'euromail_refresh_status_client',
+			$this->fake_client_returning(
+				'delivered',
+				array(
+					// Same type+timestamp as the existing local event: must not be duplicated.
+					array( 'type' => 'sent', 'timestamp' => '2026-01-01T00:00:00Z' ),
+					// A genuinely new event: must be added.
+					array( 'type' => 'delivered', 'timestamp' => '2026-01-02T00:00:00Z' ),
+				)
+			)
+		);
+
+		$this->admin->refresh_status_from_api( $id );
+
+		$events = json_decode( Euromail_Logger::get( $id )['events'], true );
+		$this->assertCount( 2, $events, 'A duplicate type+timestamp must be deduped; a genuinely new event must be added.' );
+	}
+}
+
+/**
+ * Guarantees under test:
+ * - Resend/Delete/Refresh status are dispatched from a `load-{$log_page_hook}`
+ *   action, not from the Log page's own render callback — admin.php has
+ *   already sent the admin chrome (doctype, head, admin bar) via
+ *   admin-header.php by the time a submenu page's render callback runs, so
+ *   a wp_safe_redirect() from inside it can no longer succeed. load- fires
+ *   early enough.
+ */
+class Test_Euromail_Admin_Log_Page_Actions_Wiring extends WP_UnitTestCase {
+
+	public function tear_down() {
+		global $menu, $submenu;
+		$menu    = array();
+		$submenu = array();
+		parent::tear_down();
+	}
+
+	public function test_add_menu_pages_wires_a_load_hook_for_log_page_actions() {
+		// add_submenu_page() itself checks the current user's capability
+		// and returns false (no hook suffix at all) without one.
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+
+		$admin = new Euromail_Admin();
+		$admin->add_menu_pages();
+
+		$this->assertNotEmpty( $admin->log_page_hook, 'add_submenu_page() must return a usable hook suffix.' );
+		$this->assertNotFalse(
+			has_action( "load-{$admin->log_page_hook}", array( $admin, 'maybe_handle_log_page_actions' ) ),
+			'maybe_handle_log_page_actions() must be wired to load-{hook}, which runs before admin-header.php sends any output.'
+		);
+	}
+}

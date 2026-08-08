@@ -26,13 +26,20 @@ class Euromail_Api_Backend {
 	 *
 	 * @param array  $email           Canonical email array, see Euromail_Email_Normalizer::normalize().
 	 * @param string $idempotency_key Fresh idempotency key for this attempt.
-	 * @return array{message_id: string|null}
+	 * @return array{message_id: string|null, api_id: string|null}
 	 */
 	public function send( array $email, $idempotency_key ) {
 		$sent = $this->get_client()->emails->send( $this->build_params( $email, $idempotency_key ) );
 
+		// The SDK's SentEmail carries two distinct identifiers: ->id (the
+		// API's own uuid for this send — what a webhook event and
+		// emails->get() both identify the email by) and ->messageId (the
+		// SMTP-style Message-ID for display). Both are stored: message_id
+		// for the existing log column's display purpose, api_id so
+		// incoming webhook events can find this row at all.
 		return array(
 			'message_id' => isset( $sent->messageId ) ? $sent->messageId : null,
+			'api_id'     => isset( $sent->id ) ? $sent->id : null,
 		);
 	}
 

@@ -9,6 +9,8 @@
  *                        the test key, 401 with an error envelope otherwise.
  *   POST /v1/emails    -> 202 with a queued send, unless a failure mode was
  *                        armed via POST /_mode.
+ *   GET  /v1/emails/:id -> 200 with a canned "delivered" EmailDetails
+ *                        payload, for the "Refresh status" e2e scenario.
  *   GET  /_requests    -> every POST /v1/emails body received so far, for
  *                        test assertions.
  *   POST /_mode         -> { "status": 200 | 429 | 500 } arms the next
@@ -107,6 +109,19 @@ function handleGetRequests( req, res ) {
 	sendJson( res, 200, { requests: state.requests } );
 }
 
+function handleGetEmail( req, res, id ) {
+	sendJson( res, 200, {
+		data: {
+			id: id,
+			message_id: `mock-${ id }`,
+			status: 'delivered',
+			events: [
+				{ type: 'delivered', timestamp: '2026-01-01T00:00:00Z' },
+			],
+		},
+	} );
+}
+
 async function handleSetMode( req, res ) {
 	let body;
 	try {
@@ -137,6 +152,11 @@ const server = http.createServer( ( req, res ) => {
 
 	if ( 'POST' === req.method && '/v1/emails' === url.pathname ) {
 		handleSendEmail( req, res );
+		return;
+	}
+
+	if ( 'GET' === req.method && url.pathname.startsWith( '/v1/emails/' ) ) {
+		handleGetEmail( req, res, decodeURIComponent( url.pathname.slice( '/v1/emails/'.length ) ) );
 		return;
 	}
 

@@ -19,7 +19,7 @@ class Euromail_Activator {
 	 *
 	 * @var string
 	 */
-	const DB_VERSION = '1.0.0';
+	const DB_VERSION = '1.1.0';
 
 	/**
 	 * Activation entry point.
@@ -54,8 +54,12 @@ class Euromail_Activator {
 
 	/**
 	 * Create (or upgrade) the {$wpdb->prefix}euromail_log table via dbDelta().
+	 * Public: also called by Euromail_Plugin's runtime migration guard for
+	 * a site updated in place (no deactivate/reactivate cycle), not only
+	 * from activate(). dbDelta() only adds what's missing, so calling it
+	 * again on an already-current table is a safe no-op.
 	 */
-	private static function create_log_table() {
+	public static function create_log_table() {
 		global $wpdb;
 
 		$table_name      = $wpdb->prefix . 'euromail_log';
@@ -68,6 +72,7 @@ class Euromail_Activator {
 			status VARCHAR(20) NOT NULL DEFAULT 'sending',
 			backend VARCHAR(10) DEFAULT NULL,
 			message_id VARCHAR(255) DEFAULT NULL,
+			api_id VARCHAR(64) DEFAULT NULL,
 			idempotency_key CHAR(36) NOT NULL,
 			mail_from VARCHAR(255) NOT NULL DEFAULT '',
 			mail_to TEXT NOT NULL,
@@ -81,6 +86,7 @@ class Euromail_Activator {
 			KEY created_at (created_at),
 			KEY status (status),
 			KEY message_id (message_id),
+			KEY api_id (api_id),
 			UNIQUE KEY idempotency_key (idempotency_key),
 			KEY next_attempt_at (next_attempt_at)
 		) $charset_collate;";

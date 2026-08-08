@@ -38,6 +38,7 @@ if ( file_exists( EUROMAIL_PLUGIN_DIR . 'vendor/autoload.php' ) ) {
 define( 'EUROMAIL_SDK_LOADED', interface_exists( 'EuroMail\\Http\\TransportInterface' ) && class_exists( 'EuroMail\\Client' ) );
 
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-settings.php';
+require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-status.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-logger.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-retention.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-smtp-exception.php';
@@ -45,6 +46,7 @@ require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-smtp-backend.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-email-normalizer.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-mailer.php';
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-queue.php';
+require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-webhook-controller.php';
 
 if ( EUROMAIL_SDK_LOADED ) {
 	require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-wp-transport.php';
@@ -54,6 +56,7 @@ if ( EUROMAIL_SDK_LOADED ) {
 if ( is_admin() ) {
 	require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-admin.php';
 	require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-log-table.php';
+	require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-site-health.php';
 }
 
 require_once EUROMAIL_PLUGIN_DIR . 'includes/class-euromail-activator.php';

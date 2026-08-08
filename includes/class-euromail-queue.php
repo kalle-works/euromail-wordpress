@@ -103,6 +103,7 @@ class Euromail_Queue {
 				array(
 					'backend'         => $result['backend'],
 					'message_id'      => $result['message_id'],
+					'api_id'          => $result['api_id'],
 					'attempts'        => $attempts,
 					'next_attempt_at' => null,
 					'error'           => null,
