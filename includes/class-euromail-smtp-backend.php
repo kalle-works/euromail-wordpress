@@ -181,17 +181,26 @@ class Euromail_Smtp_Backend {
 
 	/**
 	 * Heuristically classify an SMTP error message as retryable (a
-	 * transient 4xx / connection issue) or permanent (a 5xx rejection, bad
-	 * credentials, or an invalid address). PHPMailer doesn't expose a
-	 * structured error code, only free-text ErrorInfo, so this is
-	 * pattern-based and defaults to retryable when unsure — a spurious
-	 * retry is cheap, silently dropping a transient failure is not.
+	 * transient 4xx / connection issue) or permanent (a 5xx rejection or an
+	 * invalid address). PHPMailer doesn't expose a structured error code,
+	 * only free-text ErrorInfo, so this is pattern-based and defaults to
+	 * retryable when unsure — a spurious retry is cheap, silently dropping
+	 * a transient failure is not.
+	 *
+	 * Deliberately does NOT hardcode "could not authenticate" as permanent:
+	 * an auth failure is classified from its own numeric SMTP reply code
+	 * exactly like any other error — a 454/421-style 4xx ("temporary
+	 * authentication failure") is retryable, a 535-style 5xx ("authentication
+	 * failed") is permanent, and one with no parsable code at all (a local
+	 * PHPMailer-generated message, not a server reply) defaults retryable:
+	 * a genuinely bad password just exhausts the retry budget and ends up
+	 * failed anyway, while a transient outage recovers on its own.
 	 *
 	 * @param string $message SMTP/PHPMailer error text.
 	 * @return bool
 	 */
 	private static function is_retryable_message( $message ) {
-		$permanent_patterns = array( 'invalid address', 'could not authenticate', 'recipient not accepted', 'mailbox unavailable' );
+		$permanent_patterns = array( 'invalid address', 'recipient not accepted', 'mailbox unavailable' );
 
 		foreach ( $permanent_patterns as $pattern ) {
 			if ( false !== stripos( $message, $pattern ) ) {

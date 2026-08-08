@@ -202,7 +202,7 @@ class Test_Euromail_Smtp_Backend extends WP_UnitTestCase {
 	}
 
 	public function test_permanent_smtp_failure_is_thrown_as_a_non_retryable_exception() {
-		list( $backend, $holder ) = $this->make_backend_and_holder( 'SMTP Error: Could not authenticate.' );
+		list( $backend, $holder ) = $this->make_backend_and_holder( 'SMTP Error: The following recipients failed: invalid address' );
 
 		try {
 			$backend->send( $this->base_email(), 'idem-key' );
@@ -220,6 +220,39 @@ class Test_Euromail_Smtp_Backend extends WP_UnitTestCase {
 			$this->fail( 'Expected a Euromail_Smtp_Exception.' );
 		} catch ( Euromail_Smtp_Exception $e ) {
 			$this->assertTrue( $e->is_retryable() );
+		}
+	}
+
+	public function test_auth_failure_with_a_4xx_code_is_retryable() {
+		list( $backend, $holder ) = $this->make_backend_and_holder( 'SMTP Error: Could not authenticate. 454 4.7.0 Temporary authentication failure' );
+
+		try {
+			$backend->send( $this->base_email(), 'idem-key' );
+			$this->fail( 'Expected a Euromail_Smtp_Exception.' );
+		} catch ( Euromail_Smtp_Exception $e ) {
+			$this->assertTrue( $e->is_retryable(), 'A 4xx SMTP auth reply is transient and must be retried, not treated as a permanently bad credential.' );
+		}
+	}
+
+	public function test_auth_failure_with_a_5xx_code_is_permanent() {
+		list( $backend, $holder ) = $this->make_backend_and_holder( 'SMTP Error: Could not authenticate. 535 5.7.8 Authentication credentials invalid' );
+
+		try {
+			$backend->send( $this->base_email(), 'idem-key' );
+			$this->fail( 'Expected a Euromail_Smtp_Exception.' );
+		} catch ( Euromail_Smtp_Exception $e ) {
+			$this->assertFalse( $e->is_retryable(), 'A 5xx SMTP auth reply is a genuinely rejected credential and must not be retried.' );
+		}
+	}
+
+	public function test_auth_failure_with_no_parsable_code_defaults_to_retryable() {
+		list( $backend, $holder ) = $this->make_backend_and_holder( 'SMTP Error: Could not authenticate.' );
+
+		try {
+			$backend->send( $this->base_email(), 'idem-key' );
+			$this->fail( 'Expected a Euromail_Smtp_Exception.' );
+		} catch ( Euromail_Smtp_Exception $e ) {
+			$this->assertTrue( $e->is_retryable(), 'A locally-generated PHPMailer message with no server reply code must default to retryable, not be assumed permanent.' );
 		}
 	}
 }
