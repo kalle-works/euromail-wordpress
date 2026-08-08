@@ -3,51 +3,31 @@
  * Tests for Euromail_Queue.
  *
  * Guarantees under test:
- * - A retrying row that now succeeds is marked sent, and wp_mail_succeeded
+ * - A queued row that now succeeds is marked sent, and wp_mail_succeeded
  *   fires with the stored to/subject.
- * - A retrying row that fails again, retryably, with attempts still under
- *   the cap stays in 'retrying' with an advanced next_attempt_at (the
- *   fixed backoff table) and an incremented attempts count.
- * - next_attempt_at is the LARGER of the backend's own Retry-After hint
- *   and the fixed backoff step — a short Retry-After never shortens our
- *   own minimum backoff.
- * - A retrying row that fails again with attempts about to reach the cap
- *   is marked permanently failed instead of retried again.
+ * - A queued row that fails again, retryably, with attempts still under
+ *   the cap stays in 'queued' with an advanced next_attempt_at (the fixed
+ *   backoff table) and an incremented attempts count.
+ * - next_attempt_at honors the backend's own Retry-After hint directly when
+ *   it gives one (even when that's shorter than the fixed backoff step),
+ *   falling back to the fixed backoff table otherwise.
+ * - A queued row that fails again with attempts about to reach the cap is
+ *   marked permanently failed instead of retried again.
  * - A permanent (non-retryable) failure is marked failed immediately,
  *   regardless of how many attempts remain.
- * - Attachments are re-read fresh from their source 'path' at retry time
- *   (the stored payload never carries content); a missing file is a
- *   permanent failure naming the file, not a retryable one.
- * - The claim guard is atomic: a row not in 'retrying' status is left
+ * - euromail_store_body is honored on a 'failed' transition reached via the
+ *   retry queue exactly as it is on the initial attempt: off nulls the
+ *   payload, on keeps it with attachment content stripped.
+ * - The claim guard is atomic: a row not in 'queued' status is left
  *   completely untouched by process_row() (no reprocessing of an
  *   already-claimed or already-finished row).
  * - process() only picks up rows whose next_attempt_at is due, and leaves
  *   rows scheduled in the future alone.
- * - A retrying row with a missing/unreadable payload is marked failed
- *   with an explanatory error, rather than fataling.
+ * - A queued row with a missing/unreadable payload is marked failed with
+ *   an explanatory error, rather than fataling.
  *
  * @package Euromail
  */
-
-/**
- * Fake backend that records the canonical email it was asked to send, so a
- * test can inspect what Euromail_Queue actually rehydrated.
- */
-class Euromail_Test_Capturing_Backend {
-
-	public $captured_email;
-
-	private $result;
-
-	public function __construct( $message_id ) {
-		$this->result = array( 'message_id' => $message_id );
-	}
-
-	public function send( array $email, $idempotency_key ) {
-		$this->captured_email = $email;
-		return $this->result;
-	}
-}
 
 class Test_Euromail_Queue extends WP_UnitTestCase {
 
@@ -85,13 +65,13 @@ class Test_Euromail_Queue extends WP_UnitTestCase {
 	 * @param array $attachment_overrides Canonical attachment entries for the stored payload.
 	 * @return int Inserted row ID.
 	 */
-	private function insert_retrying_row( array $overrides = array(), array $attachment_overrides = array() ) {
+	private function insert_queued_row( array $overrides = array(), array $attachment_overrides = array() ) {
 		$defaults = array(
-			'status'          => 'retrying',
+			'status'          => 'queued',
 			'idempotency_key' => wp_generate_uuid4(),
 			'mail_from'       => 'wordpress@example.com',
 			'mail_to'         => 'recipient@example.com',
-			'subject'         => 'Retrying test',
+			'subject'         => 'Queued test',
 			'attempts'        => 1,
 			'next_attempt_at' => gmdate( 'Y-m-d H:i:s', time() - 60 ), // already due
 			'payload'         => wp_json_encode(
@@ -102,7 +82,7 @@ class Test_Euromail_Queue extends WP_UnitTestCase {
 					'cc'          => array(),
 					'bcc'         => array(),
 					'reply_to'    => '',
-					'subject'     => 'Retrying test',
+					'subject'     => 'Queued test',
 					'text_body'   => 'Body text',
 					'headers'     => array(),
 					'attachments' => $attachment_overrides,
@@ -120,7 +100,7 @@ class Test_Euromail_Queue extends WP_UnitTestCase {
 	}
 
 	public function test_process_row_marks_sent_on_success() {
-		$id = $this->insert_retrying_row();
+		$id = $this->insert_queued_row();
 
 		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::succeeding( 'msg-retry-1' ) ) );
 
@@ -146,48 +126,51 @@ class Test_Euromail_Queue extends WP_UnitTestCase {
 	}
 
 	public function test_process_row_reschedules_a_retryable_failure_under_the_attempt_cap() {
-		$id = $this->insert_retrying_row( array( 'attempts' => 1 ) );
+		$id = $this->insert_queued_row( array( 'attempts' => 1 ) );
 
-		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::failing( new Euromail_Retryable_Exception( 'still down' ) ) ) );
+		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::failing( new Euromail_Smtp_Exception( 'still down', true ) ) ) );
 
 		Euromail_Queue::process_row( $id );
 
 		$row = Euromail_Logger::get( $id );
-		$this->assertSame( 'retrying', $row['status'] );
+		$this->assertSame( 'queued', $row['status'] );
 		$this->assertSame( 2, (int) $row['attempts'] );
 		$this->assertNotNull( $row['next_attempt_at'] );
 
-		// attempts is now 2, so the backoff index is BACKOFF_SECONDS[1] (5 minutes).
+		// attempts is now 2, so the backoff index is BACKOFF_SECONDS[1] (15 minutes).
 		$expected_delay      = Euromail_Queue::BACKOFF_SECONDS[1];
 		$seconds_until_retry = strtotime( $row['next_attempt_at'] ) - time();
 		$this->assertGreaterThan( $expected_delay - 10, $seconds_until_retry );
 		$this->assertLessThanOrEqual( $expected_delay + 10, $seconds_until_retry );
 	}
 
-	public function test_next_attempt_at_uses_the_larger_of_retry_after_and_the_backoff_step() {
-		// At attempts=2 the backoff step is 300s (5 minutes). A short
-		// Retry-After (10s) must NOT shorten that.
-		$id = $this->insert_retrying_row( array( 'attempts' => 1 ) );
+	public function test_next_attempt_at_honors_a_shorter_retry_after_directly() {
+		// At attempts=2 the fixed backoff step would be 900s (15 minutes),
+		// but a backend-provided Retry-After must win outright, even a
+		// much shorter one — the server's own hint is authoritative, not a
+		// floor under it.
+		$id = $this->insert_queued_row( array( 'attempts' => 1 ) );
 
 		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::failing( $this->rate_limited_exception( 10 ) ) ) );
 
 		Euromail_Queue::process_row( $id );
 
-		$row                  = Euromail_Logger::get( $id );
-		$seconds_until_retry  = strtotime( $row['next_attempt_at'] ) - time();
-		$this->assertGreaterThan( Euromail_Queue::BACKOFF_SECONDS[1] - 10, $seconds_until_retry, 'A short Retry-After must not shorten the backoff step.' );
+		$row                 = Euromail_Logger::get( $id );
+		$seconds_until_retry = strtotime( $row['next_attempt_at'] ) - time();
+		$this->assertLessThan( Euromail_Queue::BACKOFF_SECONDS[1], $seconds_until_retry, 'A short Retry-After must be honored directly, not floored at the backoff step.' );
+		$this->assertGreaterThan( 0, $seconds_until_retry );
+	}
 
-		// A LONG Retry-After (e.g. 6 hours) must win over the shorter
-		// backoff step.
-		$id2 = $this->insert_retrying_row( array( 'attempts' => 1 ) );
+	public function test_next_attempt_at_honors_a_longer_retry_after_directly() {
+		$id = $this->insert_queued_row( array( 'attempts' => 1 ) );
 
 		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::failing( $this->rate_limited_exception( 21600 ) ) ) );
 
-		Euromail_Queue::process_row( $id2 );
+		Euromail_Queue::process_row( $id );
 
-		$row2                 = Euromail_Logger::get( $id2 );
-		$seconds_until_retry2 = strtotime( $row2['next_attempt_at'] ) - time();
-		$this->assertGreaterThan( 21600 - 10, $seconds_until_retry2, 'A long Retry-After must win over a shorter backoff step.' );
+		$row                 = Euromail_Logger::get( $id );
+		$seconds_until_retry = strtotime( $row['next_attempt_at'] ) - time();
+		$this->assertGreaterThan( 21600 - 10, $seconds_until_retry, 'A long Retry-After must be honored, not capped at the shorter backoff step.' );
 	}
 
 	/**
@@ -209,9 +192,9 @@ class Test_Euromail_Queue extends WP_UnitTestCase {
 	}
 
 	public function test_process_row_marks_failed_once_attempts_are_exhausted() {
-		$id = $this->insert_retrying_row( array( 'attempts' => Euromail_Queue::MAX_ATTEMPTS - 1 ) );
+		$id = $this->insert_queued_row( array( 'attempts' => Euromail_Queue::MAX_ATTEMPTS - 1 ) );
 
-		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::failing( new Euromail_Retryable_Exception( 'still down' ) ) ) );
+		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::failing( new Euromail_Smtp_Exception( 'still down', true ) ) ) );
 
 		Euromail_Queue::process_row( $id );
 
@@ -222,9 +205,9 @@ class Test_Euromail_Queue extends WP_UnitTestCase {
 	}
 
 	public function test_process_row_marks_a_permanent_failure_failed_immediately() {
-		$id = $this->insert_retrying_row( array( 'attempts' => 1 ) );
+		$id = $this->insert_queued_row( array( 'attempts' => 1 ) );
 
-		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::failing( new Euromail_Permanent_Exception( 'bad credentials' ) ) ) );
+		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::failing( new Euromail_Smtp_Exception( 'bad credentials', false ) ) ) );
 
 		Euromail_Queue::process_row( $id );
 
@@ -233,61 +216,56 @@ class Test_Euromail_Queue extends WP_UnitTestCase {
 		$this->assertSame( 2, (int) $row['attempts'] );
 	}
 
-	public function test_process_row_rehydrates_an_attachment_that_still_exists_and_sends() {
+	public function test_process_row_failed_with_store_body_disabled_nulls_the_payload() {
+		update_option( 'euromail_store_body', false );
+
+		$id = $this->insert_queued_row( array( 'attempts' => 1 ) );
+
+		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::failing( new Euromail_Smtp_Exception( 'bad credentials', false ) ) ) );
+
+		Euromail_Queue::process_row( $id );
+
+		$row = Euromail_Logger::get( $id );
+		$this->assertSame( 'failed', $row['status'] );
+		$this->assertNull( $row['payload'], 'A permanent failure reached via the retry queue must respect euromail_store_body exactly like the initial attempt does.' );
+
+		delete_option( 'euromail_store_body' );
+	}
+
+	public function test_process_row_failed_with_store_body_enabled_strips_attachment_content() {
+		update_option( 'euromail_store_body', true );
+
 		$path = $this->make_temp_file( 'attachment bytes' );
 
-		$id = $this->insert_retrying_row(
-			array(),
+		$id = $this->insert_queued_row(
+			array( 'attempts' => 1 ),
 			array(
 				array(
 					'filename'     => 'file.txt',
 					'content_type' => 'text/plain',
 					'path'         => $path,
+					'content'      => base64_encode( 'attachment bytes' ),
 					'size'         => 17,
 				),
 			)
 		);
 
-		$backend = new Euromail_Test_Capturing_Backend( 'msg-attachment' );
-		add_filter( 'euromail_backends', $this->fake_backends_filter( $backend ) );
+		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::failing( new Euromail_Smtp_Exception( 'bad credentials', false ) ) ) );
 
 		Euromail_Queue::process_row( $id );
 
 		$row = Euromail_Logger::get( $id );
-		$this->assertSame( 'sent', $row['status'], 'A retry whose attachment file still exists must send successfully.' );
+		$this->assertSame( 'failed', $row['status'] );
+		$this->assertNotNull( $row['payload'] );
 
-		$this->assertSame(
-			base64_encode( 'attachment bytes' ),
-			$backend->captured_email['attachments'][0]['content'],
-			'The attachment content must be re-read fresh from disk, not taken from the (content-less) stored payload.'
-		);
+		$payload = json_decode( $row['payload'], true );
+		$this->assertArrayNotHasKey( 'content', $payload['attachments'][0], 'Attachment content must be stripped even though store_body is on.' );
+		$this->assertSame( $path, $payload['attachments'][0]['path'], 'The path is kept so a resend can re-read the file.' );
+
+		delete_option( 'euromail_store_body' );
 	}
 
-	public function test_process_row_marks_permanently_failed_when_an_attachment_file_is_gone() {
-		$missing_path = sys_get_temp_dir() . '/euromail-does-not-exist-' . wp_generate_uuid4() . '.txt';
-
-		$id = $this->insert_retrying_row(
-			array( 'attempts' => 1 ),
-			array(
-				array(
-					'filename'     => 'gone.txt',
-					'content_type' => 'text/plain',
-					'path'         => $missing_path,
-					'size'         => 5,
-				),
-			)
-		);
-
-		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::succeeding( 'msg-should-not-happen' ) ) );
-
-		Euromail_Queue::process_row( $id );
-
-		$row = Euromail_Logger::get( $id );
-		$this->assertSame( 'failed', $row['status'], 'A missing attachment file must be a permanent failure, not a retry.' );
-		$this->assertStringContainsString( 'gone.txt', $row['error'], 'The error must name the missing file.' );
-	}
-
-	public function test_process_row_is_a_noop_for_a_row_not_in_retrying_status() {
+	public function test_process_row_is_a_noop_for_a_row_not_in_queued_status() {
 		// Deliberately 'failed', not 'sending': the claim UPDATE sets
 		// status to 'sending', so starting from 'sending' would make a
 		// no-op guard indistinguishable from a real claim — MySQL reports
@@ -295,19 +273,19 @@ class Test_Euromail_Queue extends WP_UnitTestCase {
 		// change. Starting from 'failed' means a missing status guard
 		// would visibly flip the row to 'sending' and this test would
 		// catch it.
-		$id = $this->insert_retrying_row( array( 'status' => 'failed', 'attempts' => 3 ) );
+		$id = $this->insert_queued_row( array( 'status' => 'failed', 'attempts' => 3 ) );
 
 		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::succeeding( 'msg-should-not-happen' ) ) );
 
 		Euromail_Queue::process_row( $id );
 
 		$row = Euromail_Logger::get( $id );
-		$this->assertSame( 'failed', $row['status'], 'A row not in retrying status must be left completely untouched.' );
+		$this->assertSame( 'failed', $row['status'], 'A row not in queued status must be left completely untouched.' );
 		$this->assertSame( 3, (int) $row['attempts'] );
 	}
 
 	public function test_claim_for_retry_only_lets_one_caller_win() {
-		$id = $this->insert_retrying_row();
+		$id = $this->insert_queued_row();
 
 		$first_claim  = Euromail_Logger::claim_for_retry( $id );
 		$second_claim = Euromail_Logger::claim_for_retry( $id );
@@ -317,8 +295,8 @@ class Test_Euromail_Queue extends WP_UnitTestCase {
 	}
 
 	public function test_process_only_picks_up_rows_that_are_due() {
-		$due_id     = $this->insert_retrying_row( array( 'next_attempt_at' => gmdate( 'Y-m-d H:i:s', time() - 60 ) ) );
-		$not_due_id = $this->insert_retrying_row( array( 'next_attempt_at' => gmdate( 'Y-m-d H:i:s', time() + 3600 ) ) );
+		$due_id     = $this->insert_queued_row( array( 'next_attempt_at' => gmdate( 'Y-m-d H:i:s', time() - 60 ) ) );
+		$not_due_id = $this->insert_queued_row( array( 'next_attempt_at' => gmdate( 'Y-m-d H:i:s', time() + 3600 ) ) );
 
 		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::succeeding( 'msg-batch' ) ) );
 
@@ -328,11 +306,11 @@ class Test_Euromail_Queue extends WP_UnitTestCase {
 		$not_due_row = Euromail_Logger::get( $not_due_id );
 
 		$this->assertSame( 'sent', $due_row['status'] );
-		$this->assertSame( 'retrying', $not_due_row['status'], 'A row scheduled in the future must not be processed yet.' );
+		$this->assertSame( 'queued', $not_due_row['status'], 'A row scheduled in the future must not be processed yet.' );
 	}
 
 	public function test_process_row_fails_gracefully_when_payload_is_missing() {
-		$id = $this->insert_retrying_row( array( 'payload' => null ) );
+		$id = $this->insert_queued_row( array( 'payload' => null ) );
 
 		Euromail_Queue::process_row( $id );
 

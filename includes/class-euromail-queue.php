@@ -10,21 +10,19 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Hooked onto the `euromail_process_queue` cron event
+ * Hooked onto the `euromail_process_retry_queue` cron event
  * (schedule: euromail_minutely).
  */
 class Euromail_Queue {
 
 	/**
-	 * Delay, in seconds, before each retry attempt: 1 minute, 5 minutes,
-	 * 30 minutes, 2 hours, 12 hours — indexed by how many attempts have
-	 * been made so far. Combined with MAX_ATTEMPTS = 5, the last of these
-	 * only matters if a Retry-After hint stretches a wait past it; the
-	 * 5th attempt itself is the final one.
+	 * Delay, in seconds, before each retry attempt after the first (failed)
+	 * one: 1 minute, 15 minutes, 2 hours, 12 hours. Combined with
+	 * MAX_ATTEMPTS = 5, that's up to 4 retries spanning 1 minute to 12 hours.
 	 *
 	 * @var int[]
 	 */
-	const BACKOFF_SECONDS = array( 60, 300, 1800, 7200, 43200 );
+	const BACKOFF_SECONDS = array( 60, 900, 7200, 43200 );
 
 	/**
 	 * Total attempts (the original send plus retries) before a retryable
@@ -38,8 +36,8 @@ class Euromail_Queue {
 	const BATCH_SIZE = 20;
 
 	/**
-	 * Process every retrying row that is due. Hooked onto the
-	 * euromail_process_queue cron event.
+	 * Process every queued row that is due for a retry. Hooked onto the
+	 * euromail_process_retry_queue cron event.
 	 */
 	public static function process() {
 		foreach ( Euromail_Logger::due_queue_ids( self::BATCH_SIZE ) as $id ) {
@@ -79,24 +77,8 @@ class Euromail_Queue {
 		}
 
 		$attempts = (int) $row['attempts'] + 1;
-
-		try {
-			$email = self::rehydrate_attachments( $email );
-		} catch ( Euromail_Permanent_Exception $e ) {
-			Euromail_Logger::update(
-				$id,
-				array(
-					'status'          => 'failed',
-					'attempts'        => $attempts,
-					'error'           => $e->getMessage(),
-					'next_attempt_at' => null,
-				)
-			);
-			return;
-		}
-
-		$mailer = new Euromail_Mailer();
-		$result = $mailer->attempt_send( $email, $row['idempotency_key'] );
+		$mailer   = new Euromail_Mailer();
+		$result   = $mailer->attempt_send( $email, $row['idempotency_key'] );
 
 		if ( $result['success'] ) {
 			$store_body = (bool) Euromail_Settings::get( 'euromail_store_body' );
@@ -131,7 +113,7 @@ class Euromail_Queue {
 			Euromail_Logger::update(
 				$id,
 				array(
-					'status'          => 'retrying',
+					'status'          => 'queued',
 					'attempts'        => $attempts,
 					'error'           => $result['error'],
 					'next_attempt_at' => self::next_attempt_at( $attempts, $result['retry_after'] ),
@@ -140,6 +122,8 @@ class Euromail_Queue {
 			return;
 		}
 
+		$store_body = (bool) Euromail_Settings::get( 'euromail_store_body' );
+
 		Euromail_Logger::update(
 			$id,
 			array(
@@ -147,62 +131,27 @@ class Euromail_Queue {
 				'attempts'        => $attempts,
 				'error'           => $result['error'],
 				'next_attempt_at' => null,
+				'payload'         => $store_body ? wp_json_encode( Euromail_Mailer::redact_payload_for_storage( $email ) ) : null,
 			)
 		);
 	}
 
 	/**
-	 * Re-read each attachment's content fresh from its source 'path' — the
-	 * stored payload never carries base64 content (see
-	 * Euromail_Mailer::redact_payload_for_storage()) — since the original
-	 * request's temp file may or may not still exist by retry time.
-	 *
-	 * @param array $email Canonical email array decoded from the stored payload.
-	 * @return array Same array, with 'content' populated on every attachment.
-	 * @throws Euromail_Permanent_Exception When an attachment's file no longer exists; retrying won't bring it back.
-	 */
-	private static function rehydrate_attachments( array $email ) {
-		if ( empty( $email['attachments'] ) ) {
-			return $email;
-		}
-
-		foreach ( $email['attachments'] as &$attachment ) {
-			$path = isset( $attachment['path'] ) ? $attachment['path'] : '';
-
-			if ( '' === $path || ! file_exists( $path ) ) {
-				throw new Euromail_Permanent_Exception(
-					sprintf(
-						/* translators: %s: attachment file name */
-						__( 'Euromail: could not retry — attachment "%s" no longer exists on disk.', 'euromail' ),
-						isset( $attachment['filename'] ) ? $attachment['filename'] : $path
-					)
-				);
-			}
-
-			$attachment['content'] = base64_encode( (string) file_get_contents( $path ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
-		}
-		unset( $attachment );
-
-		return $email;
-	}
-
-	/**
-	 * Compute the MySQL datetime for the next retry: the larger of the
-	 * fixed backoff step for this attempt count and any Retry-After hint
-	 * the backend gave — a short Retry-After never shortens our own
-	 * minimum backoff, it can only lengthen the wait.
+	 * Compute the MySQL datetime for the next retry: the backend's own
+	 * Retry-After hint when it gave one, otherwise the fixed backoff table
+	 * indexed by how many attempts have been made so far.
 	 *
 	 * @param int      $attempts_made Total attempts made, including this one.
 	 * @param int|null $retry_after   Seconds the backend asked us to wait, if any.
 	 * @return string
 	 */
 	private static function next_attempt_at( $attempts_made, $retry_after ) {
-		$index         = min( $attempts_made - 1, count( self::BACKOFF_SECONDS ) - 1 );
-		$backoff_delay = self::BACKOFF_SECONDS[ $index ];
-
-		$delay = ( null !== $retry_after && $retry_after > 0 )
-			? max( $retry_after, $backoff_delay )
-			: $backoff_delay;
+		if ( null !== $retry_after && $retry_after > 0 ) {
+			$delay = $retry_after;
+		} else {
+			$index = min( $attempts_made - 1, count( self::BACKOFF_SECONDS ) - 1 );
+			$delay = self::BACKOFF_SECONDS[ $index ];
+		}
 
 		return gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) + $delay ); // phpcs:ignore WordPress.DateTime.CurrentTimeTimestamp.Requested
 	}

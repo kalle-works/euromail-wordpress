@@ -47,8 +47,8 @@ class Euromail_Activator {
 	 * this runs.
 	 */
 	private static function schedule_retry_queue() {
-		if ( ! wp_next_scheduled( 'euromail_process_queue' ) ) {
-			wp_schedule_event( time(), 'euromail_minutely', 'euromail_process_queue' );
+		if ( ! wp_next_scheduled( 'euromail_process_retry_queue' ) ) {
+			wp_schedule_event( time(), 'euromail_minutely', 'euromail_process_retry_queue' );
 		}
 	}
 

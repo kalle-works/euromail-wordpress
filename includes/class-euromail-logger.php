@@ -115,7 +115,7 @@ class Euromail_Logger {
 	}
 
 	/**
-	 * IDs of retrying rows due for a retry attempt, oldest-due first.
+	 * IDs of queued rows due for a retry attempt, oldest-due first.
 	 *
 	 * @param int    $limit Maximum number of IDs to return.
 	 * @param string $now   MySQL datetime to compare against; defaults to now.
@@ -131,7 +131,7 @@ class Euromail_Logger {
 		$ids = $wpdb->get_col(
 			$wpdb->prepare(
 				'SELECT id FROM ' . self::table_name() . ' WHERE status = %s AND next_attempt_at <= %s ORDER BY next_attempt_at ASC LIMIT %d',
-				'retrying',
+				'queued',
 				$now,
 				(int) $limit
 			)
@@ -141,9 +141,9 @@ class Euromail_Logger {
 	}
 
 	/**
-	 * Atomically claim a retrying row for processing by flipping its status
+	 * Atomically claim a queued row for processing by flipping its status
 	 * to 'sending'. Only one concurrent caller can win this for a given
-	 * row: the UPDATE only matches rows still in 'retrying' status, so a
+	 * row: the UPDATE only matches rows still in 'queued' status, so a
 	 * second caller (an overlapping cron run, a manual `wp cron event run`
 	 * racing the schedule, etc.) affects zero rows and knows to back off.
 	 *
@@ -155,7 +155,7 @@ class Euromail_Logger {
 
 		$affected = $wpdb->query(
 			$wpdb->prepare(
-				'UPDATE ' . self::table_name() . " SET status = 'sending', updated_at = %s WHERE id = %d AND status = 'retrying'",
+				'UPDATE ' . self::table_name() . " SET status = 'sending', updated_at = %s WHERE id = %d AND status = 'queued'",
 				current_time( 'mysql' ),
 				(int) $id
 			)

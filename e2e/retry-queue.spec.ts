@@ -12,7 +12,7 @@ async function login( page: Page ) {
 }
 
 function runCronEvent() {
-	execSync( 'npx wp-env run cli wp cron event run euromail_process_queue', { stdio: 'pipe' } );
+	execSync( 'npx wp-env run cli wp cron event run euromail_process_retry_queue', { stdio: 'pipe' } );
 }
 
 /**
@@ -25,7 +25,7 @@ function runCronEvent() {
  */
 function makeRowImmediatelyDue( mailTo: string ) {
 	execSync(
-		`npx wp-env run cli wp db query "UPDATE wp_euromail_log SET next_attempt_at = UTC_TIMESTAMP() WHERE mail_to LIKE '%${ mailTo }%' AND status = 'retrying' ORDER BY id DESC LIMIT 1"`,
+		`npx wp-env run cli wp db query "UPDATE wp_euromail_log SET next_attempt_at = UTC_TIMESTAMP() WHERE mail_to LIKE '%${ mailTo }%' AND status = 'queued' ORDER BY id DESC LIMIT 1"`,
 		{ stdio: 'pipe' }
 	);
 }
@@ -66,7 +66,7 @@ test.describe( 'Retry queue via cron (scenario 6)', () => {
 
 		await page.goto( '/wp-admin/admin.php?page=euromail-log' );
 		const firstRow = page.locator( '.wp-list-table tbody tr' ).first();
-		await expect( firstRow ).toContainText( 'retrying' );
+		await expect( firstRow ).toContainText( 'queued' );
 
 		const firstAttempt = await ( await request.get( `${ MOCK_API_URL }/_requests` ) ).json();
 		expect( firstAttempt.requests.length ).toBe( 1 );
