@@ -22,7 +22,7 @@ class Euromail_Wp_Transport implements EuroMail\Http\TransportInterface {
 	 * @return EuroMail\Http\Response
 	 * @throws EuroMail\Exceptions\TransportException On a WP_Error (network failure).
 	 */
-	public function send( EuroMail\Http\Request $request ) {
+	public function send( EuroMail\Http\Request $request ): EuroMail\Http\Response {
 		$response = wp_remote_request(
 			$request->url,
 			array(

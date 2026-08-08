@@ -15,7 +15,7 @@
             "type": "path",
             "url": "../euromail-php",
             "options": {
-                "symlink": true
+                "symlink": false
             }
         }
     ],

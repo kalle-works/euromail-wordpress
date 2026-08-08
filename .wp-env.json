@@ -9,15 +9,15 @@
     "WP_DEBUG_LOG": true,
     "WP_DEBUG_DISPLAY": true,
     "SCRIPT_DEBUG": true,
-    "WP_ENVIRONMENT_TYPE": "local",
-    "EUROMAIL_API_BASE_URL": "http://host.docker.internal:8825"
+    "WP_ENVIRONMENT_TYPE": "local"
   },
   "env": {
     "development": {
       "port": 8888,
       "config": {
         "WP_DEBUG": true,
-        "SCRIPT_DEBUG": true
+        "SCRIPT_DEBUG": true,
+        "EUROMAIL_API_BASE_URL": "http://host.docker.internal:8825"
       }
     },
     "tests": {
