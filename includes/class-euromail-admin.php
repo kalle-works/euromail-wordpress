@@ -75,6 +75,15 @@ class Euromail_Admin {
 			'euromail-log',
 			array( $this, 'render_log_page' )
 		);
+
+		add_submenu_page(
+			'euromail',
+			__( 'Domains', 'euromail' ),
+			__( 'Domains', 'euromail' ),
+			'manage_options',
+			'euromail-domains',
+			array( $this, 'render_domains_page' )
+		);
 	}
 
 	/**
@@ -146,6 +155,9 @@ class Euromail_Admin {
 		$smtp_username        = Euromail_Settings::get( 'euromail_smtp_username' );
 		$smtp_password        = Euromail_Settings::get( 'euromail_smtp_password' );
 		$smtp_password_locked = defined( 'EUROMAIL_SMTP_PASSWORD' ) && '' !== EUROMAIL_SMTP_PASSWORD;
+		$webhook_secret       = Euromail_Settings::get( 'euromail_webhook_secret' );
+		$webhook_secret_locked = defined( 'EUROMAIL_WEBHOOK_SECRET' ) && '' !== EUROMAIL_WEBHOOK_SECRET;
+		$webhook_url          = rest_url( 'euromail/v1/webhook' );
 
 		?>
 		<div class="wrap">
@@ -295,6 +307,26 @@ class Euromail_Admin {
 						</td>
 					</tr>
 					<tr>
+						<th scope="row"><label for="euromail_webhook_secret"><?php esc_html_e( 'Webhook secret', 'euromail' ); ?></label></th>
+						<td>
+							<input type="password"
+								id="euromail_webhook_secret"
+								name="euromail_webhook_secret"
+								value="<?php echo esc_attr( $webhook_secret ); ?>"
+								class="regular-text"
+								autocomplete="off"
+								<?php disabled( $webhook_secret_locked ); ?> />
+							<?php if ( $webhook_secret_locked ) : ?>
+								<p class="description"><?php esc_html_e( 'Defined in wp-config.php.', 'euromail' ); ?></p>
+							<?php endif; ?>
+							<p class="description">
+								<?php esc_html_e( 'Webhook URL — paste this into dashboard.euromail.dev along with the secret above to receive delivery, open and click events:', 'euromail' ); ?>
+								<br />
+								<code id="euromail-webhook-url"><?php echo esc_html( $webhook_url ); ?></code>
+							</p>
+						</td>
+					</tr>
+					<tr>
 						<th scope="row"><label for="euromail_log_retention_days"><?php esc_html_e( 'Log retention (days)', 'euromail' ); ?></label></th>
 						<td><input type="number" min="1" id="euromail_log_retention_days" name="euromail_log_retention_days" value="<?php echo esc_attr( $log_retention_days ); ?>" class="small-text" /></td>
 					</tr>
@@ -405,6 +437,13 @@ class Euromail_Admin {
 			update_option(
 				'euromail_smtp_password',
 				isset( $_POST['euromail_smtp_password'] ) ? sanitize_text_field( wp_unslash( $_POST['euromail_smtp_password'] ) ) : ''
+			);
+		}
+
+		if ( ! defined( 'EUROMAIL_WEBHOOK_SECRET' ) || '' === EUROMAIL_WEBHOOK_SECRET ) {
+			update_option(
+				'euromail_webhook_secret',
+				isset( $_POST['euromail_webhook_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['euromail_webhook_secret'] ) ) : ''
 			);
 		}
 
@@ -684,6 +723,128 @@ class Euromail_Admin {
 	}
 
 	/**
+	 * Render the read-only Domains page: the sending domains configured on
+	 * euromail.dev and their verification status, via the SDK. Never
+	 * fatals — an unconfigured site, a missing SDK, an insufficient-scope
+	 * API key (403), or any other SDK failure all render a plain notice
+	 * instead of breaking the page.
+	 */
+	public function render_domains_page() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		list( $domains, $error ) = $this->fetch_domains();
+
+		?>
+		<div class="wrap">
+			<h1><?php esc_html_e( 'Euromail Domains', 'euromail' ); ?></h1>
+
+			<?php if ( null !== $error ) : ?>
+				<div class="notice notice-error"><p><?php echo esc_html( $error ); ?></p></div>
+			<?php elseif ( empty( $domains ) ) : ?>
+				<p><?php esc_html_e( 'No domains found.', 'euromail' ); ?></p>
+			<?php else : ?>
+				<table class="widefat striped">
+					<thead>
+						<tr>
+							<th><?php esc_html_e( 'Domain', 'euromail' ); ?></th>
+							<th><?php esc_html_e( 'Status', 'euromail' ); ?></th>
+						</tr>
+					</thead>
+					<tbody>
+						<?php foreach ( $domains as $domain ) : ?>
+							<tr>
+								<td><?php echo esc_html( $this->domain_field( $domain, array( 'domain', 'name' ), '—' ) ); ?></td>
+								<td><?php echo esc_html( $this->domain_status_label( $domain ) ); ?></td>
+							</tr>
+						<?php endforeach; ?>
+					</tbody>
+				</table>
+				<p class="description"><?php esc_html_e( 'Sends from an unverified domain are sandboxed and may not be delivered.', 'euromail' ); ?></p>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Fetch the domain list via the SDK.
+	 *
+	 * @return array{0: array[]|null, 1: string|null} [domains, error message].
+	 */
+	private function fetch_domains() {
+		if ( ! Euromail_Settings::is_api_configured() ) {
+			return array( null, __( 'Configure an API key to view domains.', 'euromail' ) );
+		}
+
+		if ( ! EUROMAIL_SDK_LOADED ) {
+			return array( null, __( 'The Euromail SDK is not installed.', 'euromail' ) );
+		}
+
+		/**
+		 * Filters the SDK client used to list domains, letting tests inject
+		 * a fake client instead of making a real network request.
+		 *
+		 * @param object|null $client Default null.
+		 */
+		$client = apply_filters( 'euromail_domains_client', null );
+
+		if ( null === $client ) {
+			$client = new EuroMail\Client(
+				Euromail_Settings::get( 'euromail_api_key' ),
+				array(
+					'transport'   => new Euromail_Wp_Transport(),
+					'base_url'    => Euromail_Settings::get( 'euromail_api_base_url' ),
+					'max_retries' => 0,
+				)
+			);
+		}
+
+		try {
+			return array( $client->domains->all(), null );
+		} catch ( EuroMail\Exceptions\AuthenticationException $e ) {
+			return array( null, __( 'The configured API key does not have permission to list domains.', 'euromail' ) );
+		} catch ( Throwable $e ) {
+			return array( null, $e->getMessage() );
+		}
+	}
+
+	/**
+	 * Read the first present key from a raw domain array (the SDK returns
+	 * domains as plain arrays, not a typed model).
+	 *
+	 * @param array    $domain  Raw domain array.
+	 * @param string[] $keys    Candidate key names, in priority order.
+	 * @param string   $default Fallback when none are present.
+	 * @return string
+	 */
+	private function domain_field( array $domain, array $keys, $default ) {
+		foreach ( $keys as $key ) {
+			if ( isset( $domain[ $key ] ) && '' !== (string) $domain[ $key ] ) {
+				return (string) $domain[ $key ];
+			}
+		}
+
+		return $default;
+	}
+
+	/**
+	 * @param array $domain Raw domain array.
+	 * @return string
+	 */
+	private function domain_status_label( array $domain ) {
+		if ( isset( $domain['status'] ) && '' !== (string) $domain['status'] ) {
+			return (string) $domain['status'];
+		}
+
+		if ( isset( $domain['verified'] ) ) {
+			return $domain['verified'] ? __( 'verified', 'euromail' ) : __( 'unverified', 'euromail' );
+		}
+
+		return '—';
+	}
+
+	/**
 	 * Render the Log page: a WP_List_Table of delivery attempts, with
 	 * status filter views, Resend/Delete row actions, and a bulk Delete
 	 * action — or, for `?action=view`, a single row's full detail.
@@ -693,7 +854,7 @@ class Euromail_Admin {
 			return;
 		}
 
-		if ( isset( $_GET['action'], $_GET['id'] ) && 'view' === sanitize_text_field( wp_unslash( $_GET['action'] ) ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( isset( $_GET['action'], $_GET['id'] ) && in_array( sanitize_text_field( wp_unslash( $_GET['action'] ) ), array( 'view', 'refresh_status' ), true ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			$this->render_log_detail_page( absint( $_GET['id'] ) );
 			return;
 		}
@@ -720,16 +881,17 @@ class Euromail_Admin {
 	}
 
 	/**
-	 * Render the detail view for a single log row: every column, plus a
-	 * readable preview of the stored payload. Read-only — no nonce needed,
-	 * since viewing has no side effects.
-	 *
-	 * Events timeline (webhook delivery/open/click events) arrives in M4;
-	 * the 'events' column is already reserved for it in the schema.
+	 * Render the detail view for a single log row: every column, the
+	 * webhook events timeline, and a readable preview of the stored
+	 * payload. Also handles the "Refresh status" action (?action=refresh_status)
+	 * before rendering, redirecting back to a clean ?action=view URL
+	 * afterwards so reloading never repeats it.
 	 *
 	 * @param int $id Log row ID.
 	 */
 	private function render_log_detail_page( $id ) {
+		$this->maybe_handle_refresh_status( $id );
+
 		$row = Euromail_Logger::get( $id );
 
 		$back_url = admin_url( 'admin.php?page=euromail-log' );
@@ -740,9 +902,19 @@ class Euromail_Admin {
 
 			<p><a href="<?php echo esc_url( $back_url ); ?>">&larr; <?php esc_html_e( 'Back to the log', 'euromail' ); ?></a></p>
 
+			<?php $this->render_log_notice(); ?>
+
 			<?php if ( ! $row ) : ?>
 				<div class="notice notice-error"><p><?php esc_html_e( 'This log entry no longer exists.', 'euromail' ); ?></p></div>
 				<?php return; ?>
+			<?php endif; ?>
+
+			<?php if ( 'api' === $row['backend'] && ! empty( $row['api_id'] ) ) : ?>
+				<p>
+					<a class="button" href="<?php echo esc_url( $this->refresh_status_url( $row['id'] ) ); ?>">
+						<?php esc_html_e( 'Refresh status', 'euromail' ); ?>
+					</a>
+				</p>
 			<?php endif; ?>
 
 			<table class="form-table">
@@ -757,8 +929,35 @@ class Euromail_Admin {
 				<tr><th scope="row"><?php esc_html_e( 'Attempts', 'euromail' ); ?></th><td><?php echo esc_html( $row['attempts'] ); ?></td></tr>
 				<tr><th scope="row"><?php esc_html_e( 'Next attempt', 'euromail' ); ?></th><td><?php echo esc_html( '' !== (string) $row['next_attempt_at'] ? $row['next_attempt_at'] : '—' ); ?></td></tr>
 				<tr><th scope="row"><?php esc_html_e( 'Message ID', 'euromail' ); ?></th><td><?php echo esc_html( '' !== (string) $row['message_id'] ? $row['message_id'] : '—' ); ?></td></tr>
+				<tr><th scope="row"><?php esc_html_e( 'API ID', 'euromail' ); ?></th><td><?php echo esc_html( '' !== (string) $row['api_id'] ? $row['api_id'] : '—' ); ?></td></tr>
 				<tr><th scope="row"><?php esc_html_e( 'Idempotency key', 'euromail' ); ?></th><td><code><?php echo esc_html( $row['idempotency_key'] ); ?></code></td></tr>
 				<tr><th scope="row"><?php esc_html_e( 'Error', 'euromail' ); ?></th><td><?php echo esc_html( '' !== (string) $row['error'] ? $row['error'] : '—' ); ?></td></tr>
+				<tr>
+					<th scope="row"><?php esc_html_e( 'Events', 'euromail' ); ?></th>
+					<td>
+						<?php $events = self::decode_events( $row['events'] ); ?>
+						<?php if ( empty( $events ) ) : ?>
+							<em><?php esc_html_e( 'No events yet.', 'euromail' ); ?></em>
+						<?php else : ?>
+							<table class="widefat striped" style="max-width: 480px;">
+								<thead>
+									<tr>
+										<th><?php esc_html_e( 'Type', 'euromail' ); ?></th>
+										<th><?php esc_html_e( 'Timestamp', 'euromail' ); ?></th>
+									</tr>
+								</thead>
+								<tbody>
+									<?php foreach ( $events as $event ) : ?>
+										<tr>
+											<td><?php echo esc_html( isset( $event['type'] ) ? $event['type'] : '' ); ?></td>
+											<td><?php echo esc_html( isset( $event['timestamp'] ) ? $event['timestamp'] : '' ); ?></td>
+										</tr>
+									<?php endforeach; ?>
+								</tbody>
+							</table>
+						<?php endif; ?>
+					</td>
+				</tr>
 				<tr>
 					<th scope="row"><?php esc_html_e( 'Stored payload', 'euromail' ); ?></th>
 					<td>
@@ -772,6 +971,144 @@ class Euromail_Admin {
 			</table>
 		</div>
 		<?php
+	}
+
+	/**
+	 * Decode a row's stored events JSON into a display-ready array,
+	 * tolerating a missing/unreadable value.
+	 *
+	 * @param string|null $events_json Raw 'events' column value.
+	 * @return array
+	 */
+	private static function decode_events( $events_json ) {
+		if ( empty( $events_json ) ) {
+			return array();
+		}
+
+		$decoded = json_decode( $events_json, true );
+
+		return is_array( $decoded ) ? $decoded : array();
+	}
+
+	/**
+	 * @param int $id Log row ID.
+	 * @return string Nonce'd URL for the "Refresh status" action.
+	 */
+	private function refresh_status_url( $id ) {
+		return wp_nonce_url(
+			add_query_arg(
+				array(
+					'page'   => 'euromail-log',
+					'action' => 'refresh_status',
+					'id'     => $id,
+				),
+				admin_url( 'admin.php' )
+			),
+			'euromail_refresh_status_' . $id
+		);
+	}
+
+	/**
+	 * Handle the "Refresh status" action (a GET request from the detail
+	 * page's own button), then redirect back to a clean ?action=view URL
+	 * so reloading the page never repeats it.
+	 *
+	 * @param int $id Log row ID.
+	 */
+	private function maybe_handle_refresh_status( $id ) {
+		if ( ! isset( $_GET['action'] ) || 'refresh_status' !== sanitize_text_field( wp_unslash( $_GET['action'] ) ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			return;
+		}
+
+		check_admin_referer( 'euromail_refresh_status_' . $id );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		$notice = $this->refresh_status_from_api( $id );
+
+		wp_safe_redirect(
+			add_query_arg(
+				array(
+					'page'                => 'euromail-log',
+					'action'              => 'view',
+					'id'                  => $id,
+					'euromail_log_notice' => $notice,
+				),
+				admin_url( 'admin.php' )
+			)
+		);
+		exit;
+	}
+
+	/**
+	 * Fetch the current status/events for an API-sent row from
+	 * euromail.dev and sync them onto the row — a full replace of the
+	 * events array with the API's own authoritative list (distinct from
+	 * the webhook receiver's incremental append), since this is an
+	 * explicit "give me the current truth" sync, not another delivery
+	 * event arriving.
+	 *
+	 * @param int $id Log row ID.
+	 * @return string Notice key: 'refreshed', 'refresh_not_available', or 'refresh_failed'.
+	 */
+	private function refresh_status_from_api( $id ) {
+		$row = Euromail_Logger::get( $id );
+
+		if ( ! $row || 'api' !== $row['backend'] || empty( $row['api_id'] ) ) {
+			return 'refresh_not_available';
+		}
+
+		if ( ! EUROMAIL_SDK_LOADED || ! Euromail_Settings::is_api_configured() ) {
+			return 'refresh_failed';
+		}
+
+		/**
+		 * Filters the SDK client used by "Refresh status", letting tests
+		 * inject a fake client instead of making a real network request.
+		 *
+		 * @param object|null $client Default null.
+		 */
+		$client = apply_filters( 'euromail_refresh_status_client', null );
+
+		if ( null === $client ) {
+			$client = new EuroMail\Client(
+				Euromail_Settings::get( 'euromail_api_key' ),
+				array(
+					'transport'   => new Euromail_Wp_Transport(),
+					'base_url'    => Euromail_Settings::get( 'euromail_api_base_url' ),
+					'max_retries' => 0,
+				)
+			);
+		}
+
+		try {
+			$details = $client->emails->get( $row['api_id'] );
+		} catch ( Throwable $e ) {
+			return 'refresh_failed';
+		}
+
+		$events = array();
+
+		foreach ( (array) $details->events as $event ) {
+			$event    = (array) $event;
+			$events[] = array(
+				'type'      => isset( $event['type'] ) ? $event['type'] : ( isset( $event['event'] ) ? $event['event'] : '' ),
+				'timestamp' => isset( $event['timestamp'] ) ? $event['timestamp'] : ( isset( $event['created_at'] ) ? $event['created_at'] : '' ),
+				'raw'       => $event,
+			);
+		}
+
+		Euromail_Logger::update(
+			$id,
+			array(
+				'status' => ( isset( $details->status ) && '' !== (string) $details->status ) ? $details->status : $row['status'],
+				'events' => wp_json_encode( $events ),
+			)
+		);
+
+		return 'refreshed';
 	}
 
 	/**
@@ -793,6 +1130,9 @@ class Euromail_Admin {
 			'resend_failed'             => array( 'error', __( 'Could not resend this email — it has no stored payload to resend.', 'euromail' ) ),
 			'resend_missing_attachment' => array( 'error', __( 'Could not resend this email — attachment "%s" no longer exists and cannot be resent.', 'euromail' ) ),
 			'resend_not_allowed'        => array( 'error', __( 'Could not resend this email — it has already been delivered or is currently in progress.', 'euromail' ) ),
+			'refreshed'                 => array( 'success', __( 'Status refreshed from Euromail.', 'euromail' ) ),
+			'refresh_not_available'     => array( 'error', __( 'Could not refresh status — this entry was not sent through the Euromail API.', 'euromail' ) ),
+			'refresh_failed'            => array( 'error', __( 'Could not refresh status — the Euromail API request failed.', 'euromail' ) ),
 		);
 
 		if ( ! isset( $messages[ $notice ] ) ) {
