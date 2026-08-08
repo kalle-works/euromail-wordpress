@@ -34,6 +34,12 @@ $options = array(
 	'euromail_log_retention_days',
 	'euromail_store_body',
 	'euromail_delete_data_on_uninstall',
+	'euromail_smtp_host',
+	'euromail_smtp_port',
+	'euromail_smtp_encryption',
+	'euromail_smtp_auth',
+	'euromail_smtp_username',
+	'euromail_smtp_password',
 );
 
 foreach ( $options as $option ) {
