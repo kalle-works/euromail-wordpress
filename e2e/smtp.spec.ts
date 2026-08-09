@@ -1,14 +1,7 @@
 import { test, expect, Page } from '@playwright/test';
+import { login } from './helpers';
 
 const MAILPIT_URL = 'http://localhost:8025';
-
-async function login( page: Page ) {
-	await page.goto( '/wp-login.php' );
-	await page.fill( '#user_login', 'admin' );
-	await page.fill( '#user_pass', 'password' );
-	await page.click( '#wp-submit' );
-	await page.waitForURL( '**/wp-admin/**' );
-}
 
 async function configureSmtp( page: Page ) {
 	await page.goto( '/wp-admin/admin.php?page=euromail' );

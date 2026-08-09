@@ -1,15 +1,8 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { execSync } from 'child_process';
+import { login } from './helpers';
 
 const MOCK_API_URL = 'http://localhost:8825';
-
-async function login( page: Page ) {
-	await page.goto( '/wp-login.php' );
-	await page.fill( '#user_login', 'admin' );
-	await page.fill( '#user_pass', 'password' );
-	await page.click( '#wp-submit' );
-	await page.waitForURL( '**/wp-admin/**' );
-}
 
 function runCronEvent() {
 	execSync( 'npx wp-env run cli wp cron event run euromail_process_retry_queue', { stdio: 'pipe' } );

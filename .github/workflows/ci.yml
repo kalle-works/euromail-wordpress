@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Lets the e2e job (normally gated to pushes on main, since the full
+  # browser + mock-service suite is too slow to justify on every PR) be
+  # verified directly against a branch on the real runner without merging
+  # first — e.g. `gh workflow run ci.yml --ref <branch>`.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -100,8 +105,9 @@ jobs:
     runs-on: kalle-works-arm64
     needs: [lint, test]
     # Full browser + mock-service suite is slow to justify on every PR push;
-    # runs once things have already merged to main.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # runs once things have already merged to main, or on demand
+    # (workflow_dispatch) to verify a branch directly on the real runner.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     env:
       # Same reason as the test job's identical setting — see there.
       WP_ENV_HOME: ${{ github.workspace }}/.wp-env-home

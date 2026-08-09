@@ -1,17 +1,10 @@
 import { test, expect, Page } from '@playwright/test';
 import * as crypto from 'crypto';
+import { login } from './helpers';
 
 const MOCK_API_URL = 'http://localhost:8825';
 const WEBHOOK_URL = 'http://localhost:8888/wp-json/euromail/v1/webhook';
 const WEBHOOK_SECRET = 'e2e-webhook-secret';
-
-async function login( page: Page ) {
-	await page.goto( '/wp-login.php' );
-	await page.fill( '#user_login', 'admin' );
-	await page.fill( '#user_pass', 'password' );
-	await page.click( '#wp-submit' );
-	await page.waitForURL( '**/wp-admin/**' );
-}
 
 /**
  * Sign a payload exactly the way EuroMail\Webhooks\WebhookSignature::verify()

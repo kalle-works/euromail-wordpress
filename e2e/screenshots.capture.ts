@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { execSync } from 'child_process';
+import { login } from './helpers';
 
 /**
  * Captures the four wordpress.org listing screenshots into .wordpress-org/,
@@ -18,14 +19,6 @@ const MOCK_API_URL = 'http://localhost:8825';
 const WEBHOOK_URL = 'http://localhost:8888/wp-json/euromail/v1/webhook';
 const WEBHOOK_SECRET = 'screenshot-capture-secret';
 const OUTPUT_DIR = path.join( __dirname, '..', '.wordpress-org' );
-
-async function login( page: Page ) {
-	await page.goto( '/wp-login.php' );
-	await page.fill( '#user_login', 'admin' );
-	await page.fill( '#user_pass', 'password' );
-	await page.click( '#wp-submit' );
-	await page.waitForURL( '**/wp-admin/**' );
-}
 
 function sign( body: string, secret: string, timestamp = Math.floor( Date.now() / 1000 ) ): string {
 	const signature = crypto.createHmac( 'sha256', secret ).update( `${ timestamp }.${ body }` ).digest( 'hex' );
