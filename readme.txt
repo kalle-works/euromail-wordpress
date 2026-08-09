@@ -1,3 +1,4 @@
+<!-- TODO(release): "Contributors: kalle" below is an unverified placeholder — confirm the real wordpress.org username before submitting. -->
 === Euromail – SMTP & Email API ===
 Contributors: kalle
 Tags: smtp, email, transactional email, email log, email delivery
@@ -81,6 +82,7 @@ It's queued for an automatic retry, with backoff between attempts. You can also 
 1. Settings — choose your backend, configure fallback, and set up webhooks.
 2. Delivery log — every send, its status, and one-click resend.
 3. Log entry detail — the full event timeline for a single email.
+4. Send Test — confirm your configuration works end to end before relying on it.
 
 == Changelog ==
 

@@ -56,6 +56,18 @@ jobs:
       SLUG: euromail
       VERSION: ${{ needs.release.outputs.version }}
     steps:
+      - name: Check Docker availability
+        # bin/verify-zip-install.sh needs a Docker daemon; the runner naming
+        # (kalle-works-arm64) suggests these may be Kubernetes-hosted, where
+        # that's not a given. Fail here with a clear message rather than
+        # partway through a cryptic verify-zip-install.sh timeout below.
+        run: |
+          if ! docker info > /dev/null 2>&1; then
+            echo "::error::'docker info' failed — no Docker daemon available on this runner. bin/verify-zip-install.sh (and therefore this whole job) needs Docker."
+            exit 1
+          fi
+          echo "Docker is available: $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo 'version unknown')"
+
       - uses: actions/checkout@v4
         with:
           # The release job just pushed a version-bump commit and tag to
@@ -121,3 +133,4 @@ jobs:
           SLUG: ${{ env.SLUG }}
           VERSION: ${{ env.VERSION }}
           BUILD_DIR: build
+          ASSETS_DIR: .wordpress-org

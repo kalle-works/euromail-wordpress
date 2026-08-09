@@ -34,6 +34,18 @@ jobs:
     name: PHPUnit
     runs-on: kalle-works-arm64
     steps:
+      - name: Check Docker availability
+        # wp-env needs a Docker daemon; the runner naming (kalle-works-arm64)
+        # suggests these may be Kubernetes-hosted, where that's not a given.
+        # Fail here with a clear message rather than several minutes into a
+        # cryptic wp-env timeout below.
+        run: |
+          if ! docker info > /dev/null 2>&1; then
+            echo "::error::'docker info' failed — no Docker daemon available on this runner. wp-env (and therefore this whole job) needs Docker. If this runner is Kubernetes-hosted, it needs Docker-in-Docker or a Docker socket mounted before this job can run at all."
+            exit 1
+          fi
+          echo "Docker is available: $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo 'version unknown')"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -64,6 +76,14 @@ jobs:
     # runs once things have already merged to main.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
+      - name: Check Docker availability
+        run: |
+          if ! docker info > /dev/null 2>&1; then
+            echo "::error::'docker info' failed — no Docker daemon available on this runner. wp-env (and therefore this whole job) needs Docker. If this runner is Kubernetes-hosted, it needs Docker-in-Docker or a Docker socket mounted before this job can run at all."
+            exit 1
+          fi
+          echo "Docker is available: $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo 'version unknown')"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4

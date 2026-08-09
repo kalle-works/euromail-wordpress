@@ -6,6 +6,7 @@
 .editorconfig
 .wp-env.json
 .wp-env-override.json
+.wordpress-org
 .phpunit.result.cache
 node_modules
 tests
