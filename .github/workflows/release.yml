@@ -76,6 +76,9 @@ jobs:
           mkdir -p build
           rsync -a --exclude-from=.distignore ./ build/
 
+      - name: Verify no dev files leaked into the build and every runtime file is present
+        run: bash bin/verify-dist-contents.sh build
+
       - name: Build a zip named the way a real install expects (top-level folder = slug)
         run: |
           mkdir -p "pkg/${SLUG}"
@@ -94,11 +97,23 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "v${VERSION}" "${SLUG}-${VERSION}.zip" --clobber --repo "${{ github.repository }}"
 
+      - name: Check whether SVN credentials are configured yet
+        # wordpress.org submission is a one-time manual step (see readme.txt
+        # and the repo's own notes) that happens after this workflow first
+        # exists; until SVN_USERNAME/SVN_PASSWORD are added as repo secrets,
+        # the deploy step below is skipped rather than failing the whole
+        # workflow run on every push to main.
+        id: svn_check
+        run: |
+          if [ -n "${{ secrets.SVN_USERNAME }}" ] && [ -n "${{ secrets.SVN_PASSWORD }}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SVN_USERNAME/SVN_PASSWORD are not set — skipping the WordPress.org SVN deploy step. This is expected before the plugin has been submitted to and approved on WordPress.org."
+          fi
+
       - name: Deploy build/ to the WordPress.org plugin SVN repository
-        # This requires the "euromail" slug to already exist on
-        # WordPress.org (i.e. the one-time plugin submission and review has
-        # already been completed manually) — it will fail on every run
-        # before that, which is expected until then.
+        if: steps.svn_check.outputs.configured == 'true'
         uses: 10up/action-wordpress-plugin-deploy@2.3.0
         env:
           SVN_USERNAME: ${{ secrets.SVN_USERNAME }}

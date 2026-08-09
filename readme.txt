@@ -1,6 +1,6 @@
 === Euromail – SMTP & Email API ===
-Contributors: kalleworks
-Tags: smtp, transactional email, email api, wp_mail, deliverability
+Contributors: kalle
+Tags: smtp, email, transactional email, email log, email delivery
 Requires at least: 5.7
 Tested up to: 7.0
 Requires PHP: 7.4
@@ -12,7 +12,7 @@ Routes wp_mail() through the euromail.dev transactional email API, with an SMTP 
 
 == Description ==
 
-Euromail replaces WordPress's default mail sending with the [euromail.dev](https://euromail.dev) transactional email API — no server-side sendmail, no unauthenticated PHP mail() calls landing in spam. Every email your site already sends through `wp_mail()` (order confirmations, password resets, comment notifications, contact form submissions, anything) goes out through Euromail automatically, with no code changes required in the plugins that call `wp_mail()`.
+Euromail replaces WordPress's default mail sending with the [euromail.dev](https://euromail.dev) transactional email API, an EU-hosted provider — no server-side sendmail, no unauthenticated PHP mail() calls landing in spam. Every email your site already sends through `wp_mail()` (order confirmations, password resets, comment notifications, contact form submissions, anything) goes out through Euromail automatically, with no code changes required in the plugins that call `wp_mail()`.
 
 **API sending, with an SMTP fallback**
 
@@ -60,9 +60,13 @@ It replaces how those emails are *sent*, not how they're composed. Any plugin or
 
 Euromail steps out of the way. An unconfigured site sends mail exactly as it did before the plugin was installed.
 
-= Is my message content stored? =
+= Does this work with any SMTP server, or only Euromail's? =
 
-Only if you turn on "Store message body" in Settings, and only until the send reaches a final state (sent or failed) — successful sends have attachment content stripped from what's kept. You control the log retention period, and can delete all stored data (settings and log rows) on uninstall with a single checkbox.
+Any SMTP server: host, port, encryption (STARTTLS, SSL/TLS, or none), and optional authentication are all configurable. The "Use Euromail SMTP relay" button is a shortcut that fills in Euromail's own relay settings for you — it isn't required. You can also configure both the Euromail API and an unrelated SMTP server as a fallback pair.
+
+= Is my message content stored, and where? =
+
+Only if you turn on "Store message body" in Settings, and only until the send reaches a final state (sent or failed) — successful sends have attachment content stripped from what's kept. You control the log retention period, and can delete all stored data (settings and log rows) on uninstall with a single checkbox. Euromail itself (euromail.dev) is EU-hosted; when you send through its API, message content is transmitted to and briefly handled by that service the same way it would be by any transactional email provider — see euromail.dev's own privacy documentation for how it processes and retains data on its side. This plugin does not send anything to Euromail when you use the SMTP-only backend against a non-Euromail server.
 
 = Can I see whether an email was actually delivered, opened, or clicked? =
 
