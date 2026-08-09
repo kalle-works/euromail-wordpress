@@ -68,8 +68,35 @@ jobs:
       - name: Install PHP dependencies
         run: composer install --no-interaction
 
+      - name: Diagnose network reachability wp-env depends on
+        # @wordpress/env only performs first-time provisioning (WordPress
+        # core, dbDelta, and — the one this job actually needs —
+        # downloading the WordPress-develop PHPUnit test library from
+        # GitHub) when its own internal canAccessWPORG() check succeeds;
+        # that check is *specifically* a DNS resolution of the literal
+        # hostname "WordPress.org", not a check of whatever it's actually
+        # about to download from (Docker Hub for images, GitHub for the
+        # PHPUnit suite). If those are reachable but WordPress.org's DNS
+        # specifically isn't, wp-env silently skips ALL provisioning and
+        # starts from empty/unconfigured volumes — which looks exactly
+        # like "wp-env start succeeded" while leaving
+        # /wordpress-phpunit empty. Compare all three explicitly.
+        run: |
+          for host in WordPress.org github.com hub.docker.com; do
+            echo "--- DNS resolution for ${host} ---"
+            getent hosts "$host" || echo "FAILED to resolve ${host}"
+          done
+
       - name: Start the wp-env test environment
-        run: npx wp-env start
+        run: npx wp-env start --debug
+
+      - name: Show whether the PHPUnit test library was actually provisioned
+        if: always()
+        run: |
+          echo "--- WP_ENV_HOME cache dir ---"
+          ls -la "${HOME}/.wp-env" 2>&1 || echo "no ~/.wp-env directory at all"
+          echo "--- inside the tests-cli container ---"
+          docker exec "$(docker ps --filter name=tests-cli --format '{{.Names}}' | head -1)" sh -c 'echo WP_TESTS_DIR=$WP_TESTS_DIR; ls -la /wordpress-phpunit 2>&1' || echo "could not exec into a tests-cli container"
 
       - name: Run the unit test suite
         run: npm run test:unit
