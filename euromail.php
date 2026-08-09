@@ -3,7 +3,7 @@
  * Plugin Name:       Euromail – SMTP & Email API
  * Plugin URI:        https://euromail.dev
  * Description:       Routes wp_mail() through the euromail.dev transactional email API, with an SMTP fallback and a delivery log.
- * Version:           0.1.0
+ * Version:           1.0.0
  * Author:            Kalle
  * Author URI:        https://kalle.works
  * License:           GPL v2 or later
@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'EUROMAIL_VERSION', '0.1.0' );
+define( 'EUROMAIL_VERSION', '1.0.0' );
 define( 'EUROMAIL_PLUGIN_FILE', __FILE__ );
 define( 'EUROMAIL_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'EUROMAIL_PLUGIN_URL', plugin_dir_url( __FILE__ ) );

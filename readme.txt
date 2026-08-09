@@ -4,7 +4,7 @@ Tags: smtp, email, transactional email, email log, email delivery
 Requires at least: 5.7
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.1.0
+Stable tag: 1.0.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -84,6 +84,9 @@ It's queued for an automatic retry, with backoff between attempts. You can also 
 4. Send Test — confirm your configuration works end to end before relying on it.
 
 == Changelog ==
+
+= 1.0.0 =
+* See CHANGELOG.md for the full list of changes in this release.
 
 = 0.1.0 =
 * Initial release: API and SMTP sending with automatic fallback, a delivery log with retry and resend, webhook-driven delivery tracking, a Site Health check, and a domains status page.
