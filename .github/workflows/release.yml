@@ -85,7 +85,7 @@ jobs:
           rsync -a build/ "pkg/${SLUG}/"
           ( cd pkg && zip -rq "../${SLUG}-${VERSION}.zip" "${SLUG}" -x '.*' )
 
-      - name: Verify the zip installs and activates cleanly on a fresh WordPress site
+      - name: Verify the zip installs, activates, sends through the API, and logs correctly
         run: bash bin/verify-zip-install.sh "${SLUG}-${VERSION}.zip"
 
       - name: Upload the verified zip to the GitHub release
