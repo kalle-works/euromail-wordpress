@@ -48,6 +48,11 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "7.4"
+          coverage: none
+
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -66,6 +71,7 @@ jobs:
 
       - name: Stop wp-env
         if: always()
+        continue-on-error: true
         run: npx wp-env stop
 
   e2e:
@@ -85,6 +91,11 @@ jobs:
           echo "Docker is available: $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo 'version unknown')"
 
       - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "7.4"
+          coverage: none
 
       - uses: actions/setup-node@v4
         with:
@@ -107,6 +118,7 @@ jobs:
 
       - name: Stop wp-env
         if: always()
+        continue-on-error: true
         run: npx wp-env stop
 
       - name: Upload Playwright report on failure
