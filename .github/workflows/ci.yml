@@ -91,10 +91,28 @@ jobs:
         run: npx wp-env start --debug
 
       - name: Show whether the PHPUnit test library was actually provisioned
+        # First pass showed the SimpleGit clone/sparse-checkout/fetch/
+        # checkout steps all reporting success, yet the container's
+        # /wordpress-phpunit only had wp-tests-config.php (written
+        # separately, later, by configureWordPress()) — none of the
+        # actual tests/phpunit/includes content the checkout should have
+        # produced. This inspects the HOST side of that same checkout
+        # directly (not just what the container's bind mount shows) to
+        # see whether the working tree is genuinely empty there too, or
+        # whether this is a mount-visibility problem instead.
         if: always()
         run: |
           echo "--- WP_ENV_HOME cache dir ---"
           ls -la "${HOME}/.wp-env" 2>&1 || echo "no ~/.wp-env directory at all"
+          CACHE_DIR="$(find "${HOME}/.wp-env" -maxdepth 1 -type d -name 'wp-env-*' | head -1)"
+          echo "Resolved cache dir: ${CACHE_DIR}"
+          echo "--- host-side tests-WordPress-PHPUnit checkout, full tree (depth 3) ---"
+          find "${CACHE_DIR}/tests-WordPress-PHPUnit" -maxdepth 3 2>&1 || echo "directory does not exist"
+          echo "--- git state of that checkout ---"
+          git -C "${CACHE_DIR}/tests-WordPress-PHPUnit" status 2>&1 || echo "not a git repo / git status failed"
+          git -C "${CACHE_DIR}/tests-WordPress-PHPUnit" sparse-checkout list 2>&1 || echo "sparse-checkout list failed"
+          git -C "${CACHE_DIR}/tests-WordPress-PHPUnit" log --oneline -3 2>&1 || echo "git log failed"
+          git -C "${CACHE_DIR}/tests-WordPress-PHPUnit" --version
           echo "--- inside the tests-cli container ---"
           docker exec "$(docker ps --filter name=tests-cli --format '{{.Names}}' | head -1)" sh -c 'echo WP_TESTS_DIR=$WP_TESTS_DIR; ls -la /wordpress-phpunit 2>&1' || echo "could not exec into a tests-cli container"
 
