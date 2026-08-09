@@ -1,15 +1,8 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { login } from './helpers';
 
 const MOCK_API_URL = 'http://localhost:8825';
 const MAILPIT_URL = 'http://localhost:8025';
-
-async function login( page: Page ) {
-	await page.goto( '/wp-login.php' );
-	await page.fill( '#user_login', 'admin' );
-	await page.fill( '#user_pass', 'password' );
-	await page.click( '#wp-submit' );
-	await page.waitForURL( '**/wp-admin/**' );
-}
 
 test.describe( 'API-to-SMTP fallback (scenario 4)', () => {
 	test.beforeEach( async ( { page, request } ) => {

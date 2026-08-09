@@ -1,12 +1,5 @@
-import { test, expect, Page } from '@playwright/test';
-
-async function login( page: Page ) {
-	await page.goto( '/wp-login.php' );
-	await page.fill( '#user_login', 'admin' );
-	await page.fill( '#user_pass', 'password' );
-	await page.click( '#wp-submit' );
-	await page.waitForURL( '**/wp-admin/**' );
-}
+import { test, expect } from '@playwright/test';
+import { login } from './helpers';
 
 test.describe( 'Euromail settings page', () => {
 	test.beforeEach( async ( { page } ) => {

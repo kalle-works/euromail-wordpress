@@ -1,14 +1,7 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { login } from './helpers';
 
 const MOCK_API_URL = 'http://localhost:8825';
-
-async function login( page: Page ) {
-	await page.goto( '/wp-login.php' );
-	await page.fill( '#user_login', 'admin' );
-	await page.fill( '#user_pass', 'password' );
-	await page.click( '#wp-submit' );
-	await page.waitForURL( '**/wp-admin/**' );
-}
 
 test( 'the Send Test page delivers through the mock API with the expected payload', async ( { page, request } ) => {
 	await login( page );
