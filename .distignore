@@ -11,6 +11,7 @@ node_modules
 tests
 e2e
 bin
+vendor/bin
 composer.json
 composer.lock
 package.json
