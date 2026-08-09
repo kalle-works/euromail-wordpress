@@ -22,7 +22,7 @@ class Euromail_Mailer {
 	 * @param array $atts wp_mail() arguments: to, subject, message, headers, attachments.
 	 * @return mixed True on success, false on failure, or null to let core wp_mail() proceed.
 	 */
-	public function pre_wp_mail( $null, array $atts ) {
+	public function pre_wp_mail( $null, array $atts ) { // phpcs:ignore Universal.NamingConventions.NoReservedKeywordParameterNames.nullFound -- matches the pre_wp_mail filter's own parameter name in WordPress core.
 		if ( ! Euromail_Settings::is_configured() ) {
 			// Never break an unconfigured site: let core wp_mail() proceed.
 			return null;

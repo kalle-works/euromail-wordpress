@@ -147,7 +147,12 @@ class Test_Euromail_Queue extends WP_UnitTestCase {
 						'html_body'   => '<p>Hi</p>',
 						'headers'     => array( 'X-Custom' => 'custom-value' ),
 						'attachments' => array(
-							array( 'filename' => 'file.txt', 'content_type' => 'text/plain', 'path' => $path, 'content' => base64_encode( 'attachment bytes' ) ),
+							array(
+								'filename'     => 'file.txt',
+								'content_type' => 'text/plain',
+								'path'         => $path,
+								'content'      => base64_encode( 'attachment bytes' ),
+							),
 						),
 					)
 				),
@@ -377,7 +382,12 @@ class Test_Euromail_Queue extends WP_UnitTestCase {
 		// change. Starting from 'failed' means a missing status guard
 		// would visibly flip the row to 'sending' and this test would
 		// catch it.
-		$id = $this->insert_queued_row( array( 'status' => 'failed', 'attempts' => 3 ) );
+		$id = $this->insert_queued_row(
+			array(
+				'status'   => 'failed',
+				'attempts' => 3,
+			)
+		);
 
 		add_filter( 'euromail_backends', $this->fake_backends_filter( Euromail_Test_Fake_Backend::succeeding( 'msg-should-not-happen' ) ) );
 

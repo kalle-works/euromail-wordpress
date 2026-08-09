@@ -91,11 +91,11 @@ test( 'a correctly signed delivered webhook updates the log status and events ti
 
 	// The log list must show the promoted status...
 	await page.goto( '/wp-admin/admin.php?page=euromail-log' );
-	await expect( page.locator( '.wp-list-table tbody tr' ).first() ).toContainText( 'delivered' );
+	await expect( page.locator( '.wp-list-table tbody tr' ).first() ).toContainText( 'Delivered' );
 
 	// ...and the detail view's events timeline must show the event.
 	await goToFirstRowDetail( page );
-	await expect( page.locator( 'table.form-table tr', { hasText: 'Status' } ).locator( 'td' ) ).toHaveText( 'delivered' );
+	await expect( page.locator( 'table.form-table tr', { hasText: 'Status' } ).locator( 'td' ) ).toHaveText( 'Delivered' );
 
 	const eventsSection = page.locator( 'table.form-table tr', { hasText: 'Events' } );
 	await expect( eventsSection ).toContainText( 'delivered' );
@@ -121,7 +121,7 @@ test( 'a badly signed webhook is rejected and never changes the log', async ( { 
 	await expect( page.locator( '.notice-success' ) ).toContainText( 'Test email sent. Log entry #' );
 
 	await page.goto( '/wp-admin/admin.php?page=euromail-log' );
-	await expect( page.locator( '.wp-list-table tbody tr' ).first() ).toContainText( 'sent' );
+	await expect( page.locator( '.wp-list-table tbody tr' ).first() ).toContainText( 'Sent' );
 
 	const body = JSON.stringify( { id: 'irrelevant-since-signature-is-wrong' } );
 
@@ -137,5 +137,5 @@ test( 'a badly signed webhook is rejected and never changes the log', async ( { 
 	expect( webhookResponse.status() ).toBe( 401 );
 
 	await page.goto( '/wp-admin/admin.php?page=euromail-log' );
-	await expect( page.locator( '.wp-list-table tbody tr' ).first() ).toContainText( 'sent' );
+	await expect( page.locator( '.wp-list-table tbody tr' ).first() ).toContainText( 'Sent' );
 } );

@@ -87,9 +87,9 @@ class Test_Euromail_Smtp_Backend extends WP_UnitTestCase {
 		$holder->mailer = null;
 
 		$factory = function () use ( $holder, $forced_failure_message ) {
-			$mail                          = new Euromail_Test_Non_Sending_PHPMailer( true );
-			$mail->forced_failure_message  = $forced_failure_message;
-			$holder->mailer                = $mail;
+			$mail                         = new Euromail_Test_Non_Sending_PHPMailer( true );
+			$mail->forced_failure_message = $forced_failure_message;
+			$holder->mailer               = $mail;
 			return $mail;
 		};
 
@@ -136,7 +136,15 @@ class Test_Euromail_Smtp_Backend extends WP_UnitTestCase {
 	public function test_html_body_switches_content_type_to_html() {
 		list( $backend, $holder ) = $this->make_backend_and_holder();
 
-		$backend->send( $this->base_email( array( 'html_body' => '<p>Hi</p>', 'text_body' => null ) ), 'idem-key' );
+		$backend->send(
+			$this->base_email(
+				array(
+					'html_body' => '<p>Hi</p>',
+					'text_body' => null,
+				)
+			),
+			'idem-key'
+		);
 
 		$captured = $holder->mailer;
 		$this->assertSame( 'text/html', $captured->ContentType );

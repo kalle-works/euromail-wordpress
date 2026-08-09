@@ -49,7 +49,7 @@ class Euromail_Smtp_Backend {
 	 * @return array{message_id: string|null}
 	 * @throws Euromail_Smtp_Exception On any SMTP/transport failure, classified retryable or not.
 	 */
-	public function send( array $email, $idempotency_key ) {
+	public function send( array $email, $idempotency_key ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed -- kept for interface parity with Euromail_Api_Backend::send(); SMTP has no server-side dedup to key on.
 		$mail = null !== $this->mailer_factory ? call_user_func( $this->mailer_factory ) : new PHPMailer( true );
 
 		try {
@@ -69,7 +69,7 @@ class Euromail_Smtp_Backend {
 		} catch ( PHPMailerException $e ) {
 			$message = '' !== $mail->ErrorInfo ? $mail->ErrorInfo : $e->getMessage();
 
-			throw new Euromail_Smtp_Exception( $message, self::is_retryable_message( $message ) );
+			throw new Euromail_Smtp_Exception( $message, self::is_retryable_message( $message ) ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- an exception message, never echoed as page output.
 		}
 
 		return array(
@@ -99,7 +99,7 @@ class Euromail_Smtp_Backend {
 		if ( 'ssl' === $encryption ) {
 			$mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
 		} elseif ( 'none' === $encryption ) {
-			$mail->SMTPSecure   = '';
+			$mail->SMTPSecure  = '';
 			$mail->SMTPAutoTLS = false;
 		} else {
 			$mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;

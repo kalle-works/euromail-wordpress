@@ -59,7 +59,7 @@ test.describe( 'SMTP backend (scenario 3)', () => {
 		await page.goto( '/wp-admin/admin.php?page=euromail-log' );
 
 		const firstRow = page.locator( '.wp-list-table tbody tr' ).first();
-		await expect( firstRow ).toContainText( 'sent' );
+		await expect( firstRow ).toContainText( 'Sent' );
 		await expect( firstRow ).toContainText( 'smtp' );
 	} );
 } );

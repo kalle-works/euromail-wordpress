@@ -1,0 +1,165 @@
+name: Release
+
+on:
+  # Gated on CI passing on main, not merely landing there — no release
+  # (and therefore no wordpress.org deploy) of a commit CI hasn't actually
+  # gone green on. workflow_dispatch remains as a manual break-glass
+  # trigger for when that's genuinely necessary.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Semantic Release
+    runs-on: kalle-works-arm64
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # workflow_run doesn't check out the triggering commit by
+          # default (it defaults to the workflow FILE's own ref); pin
+          # explicitly to the exact commit CI just passed on. For the
+          # workflow_dispatch fallback there's no such SHA, so fall back
+          # to normal ref resolution (whatever the dispatch was run
+          # against, ordinarily main).
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install semantic-release
+        run: npm install --no-save --no-audit --no-fund semantic-release@^25 @semantic-release/git@^11 @semantic-release/changelog@^7 @semantic-release/exec@^7 conventional-changelog-conventionalcommits@^10
+
+      - name: Run semantic-release
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npx semantic-release
+          if [ -f .next-version ]; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "version=$(cat .next-version)" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish-wordpress-org:
+    name: Build, verify, and deploy to WordPress.org
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: kalle-works-arm64
+    permissions:
+      contents: write
+    env:
+      SLUG: euromail
+      VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - name: Check required tools are on the runner
+        run: |
+          missing=""
+          for tool in gh zip rsync docker; do
+            if ! command -v "$tool" > /dev/null 2>&1; then
+              missing="${missing} ${tool}"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required tool(s) on this runner:${missing}. This job needs all of gh, zip, rsync, and docker to build, verify, and publish a release."
+            exit 1
+          fi
+          echo "All required tools present: gh, zip, rsync, docker."
+
+      - name: Check Docker availability
+        # bin/verify-zip-install.sh needs a Docker daemon; the runner naming
+        # (kalle-works-arm64) suggests these may be Kubernetes-hosted, where
+        # that's not a given. Fail here with a clear message rather than
+        # partway through a cryptic verify-zip-install.sh timeout below.
+        run: |
+          if ! docker info > /dev/null 2>&1; then
+            echo "::error::'docker info' failed — no Docker daemon available on this runner. bin/verify-zip-install.sh (and therefore this whole job) needs Docker."
+            exit 1
+          fi
+          echo "Docker is available: $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo 'version unknown')"
+
+      - uses: actions/checkout@v4
+        with:
+          # Check out the exact tag semantic-release just created, never
+          # main's current tip — main could have moved again between the
+          # release job finishing and this job starting.
+          ref: v${{ needs.release.outputs.version }}
+          fetch-depth: 0
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          coverage: none
+
+      - name: Install PHP dependencies (production only, optimized autoloader)
+        run: composer install --no-dev --optimize-autoloader --no-interaction
+
+      - name: Assemble the distributable plugin directory
+        run: |
+          mkdir -p build
+          rsync -a --exclude-from=.distignore ./ build/
+
+      - name: Verify no dev files leaked into the build and every runtime file is present
+        run: bash bin/verify-dist-contents.sh build
+
+      - name: Build a zip named the way a real install expects (top-level folder = slug)
+        run: |
+          mkdir -p "pkg/${SLUG}"
+          rsync -a build/ "pkg/${SLUG}/"
+          ( cd pkg && zip -rq "../${SLUG}-${VERSION}.zip" "${SLUG}" -x '.*' )
+
+      - name: Verify the zip installs, activates, sends through the API, and logs correctly
+        run: bash bin/verify-zip-install.sh "${SLUG}-${VERSION}.zip"
+
+      - name: Upload the verified zip to the GitHub release
+        # Runs regardless of whether the SVN deploy step below can succeed
+        # yet, so every release always gets a downloadable, verified zip
+        # attached — not contingent on the one-time WordPress.org
+        # submission having happened already.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "v${VERSION}" "${SLUG}-${VERSION}.zip" --clobber --repo "${{ github.repository }}"
+
+      - name: Check whether SVN credentials are configured yet
+        # wordpress.org submission is a one-time manual step (see readme.txt
+        # and the repo's own notes) that happens after this workflow first
+        # exists; until SVN_USERNAME/SVN_PASSWORD are added as repo secrets,
+        # the deploy step below is skipped rather than failing the whole
+        # workflow run on every push to main.
+        id: svn_check
+        run: |
+          if [ -n "${{ secrets.SVN_USERNAME }}" ] && [ -n "${{ secrets.SVN_PASSWORD }}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SVN_USERNAME/SVN_PASSWORD are not set — skipping the WordPress.org SVN deploy step. This is expected before the plugin has been submitted to and approved on WordPress.org."
+          fi
+
+      - name: Deploy build/ to the WordPress.org plugin SVN repository
+        if: steps.svn_check.outputs.configured == 'true'
+        uses: 10up/action-wordpress-plugin-deploy@2.3.0
+        env:
+          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
+          SLUG: ${{ env.SLUG }}
+          VERSION: ${{ env.VERSION }}
+          BUILD_DIR: build
+          ASSETS_DIR: .wordpress-org

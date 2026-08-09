@@ -74,8 +74,8 @@ class Euromail_Email_Normalizer {
 			}
 
 			list( $name, $content ) = explode( ':', $header, 2 );
-			$name    = trim( $name );
-			$content = trim( $content );
+			$name                   = trim( $name );
+			$content                = trim( $content );
 
 			switch ( strtolower( $name ) ) {
 				case 'from':
@@ -415,8 +415,8 @@ class Euromail_Email_Normalizer {
 			throw new Exception(
 				sprintf(
 					/* translators: %d: maximum number of attachments allowed */
-					__( 'Euromail: an email cannot have more than %d attachments.', 'euromail' ),
-					self::MAX_ATTACHMENTS
+					__( 'Euromail: an email cannot have more than %d attachments.', 'euromail' ), // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped
+					self::MAX_ATTACHMENTS // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped
 				)
 			);
 		}
@@ -442,8 +442,8 @@ class Euromail_Email_Normalizer {
 				throw new Exception(
 					sprintf(
 						/* translators: %s: attachment file name */
-						__( 'Euromail: attachment "%s" has a blocked file type and cannot be sent.', 'euromail' ),
-						$filename
+						__( 'Euromail: attachment "%s" has a blocked file type and cannot be sent.', 'euromail' ), // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped
+						$filename // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped
 					)
 				);
 			}
@@ -454,8 +454,8 @@ class Euromail_Email_Normalizer {
 				throw new Exception(
 					sprintf(
 						/* translators: %s: attachment file name */
-						__( 'Euromail: attachment "%s" is larger than the 10MB per-file limit.', 'euromail' ),
-						$filename
+						__( 'Euromail: attachment "%s" is larger than the 10MB per-file limit.', 'euromail' ), // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped
+						$filename // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped
 					)
 				);
 			}
@@ -466,8 +466,8 @@ class Euromail_Email_Normalizer {
 				throw new Exception(
 					sprintf(
 						/* translators: %s: attachment file name */
-						__( 'Euromail: attachments exceed the 25MB total limit at "%s".', 'euromail' ),
-						$filename
+						__( 'Euromail: attachments exceed the 25MB total limit at "%s".', 'euromail' ), // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped
+						$filename // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped
 					)
 				);
 			}
@@ -475,7 +475,7 @@ class Euromail_Email_Normalizer {
 			$result[] = array(
 				'filename'     => $filename,
 				'content_type' => self::detect_content_type( $path, $filename ),
-				'content'      => base64_encode( (string) file_get_contents( $path ) ), // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+				'content'      => base64_encode( (string) file_get_contents( $path ) ), // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents, WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode
 				'path'         => $path,
 				'size'         => $size,
 			);
@@ -501,7 +501,9 @@ class Euromail_Email_Normalizer {
 
 			if ( false !== $finfo ) {
 				$detected = finfo_file( $finfo, $path );
-				finfo_close( $finfo );
+				// No finfo_close(): $finfo is released like any other
+				// variable once it goes out of scope; the explicit close
+				// call is deprecated as of newer PHP versions.
 
 				if ( is_string( $detected ) && '' !== $detected ) {
 					$content_type = $detected;

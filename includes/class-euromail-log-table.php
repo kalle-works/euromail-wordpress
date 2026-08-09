@@ -119,11 +119,37 @@ class Euromail_Log_Table extends WP_List_Table {
 				'<a href="%s"%s>%s</a>',
 				esc_url( add_query_arg( 'status', $status, $base_url ) ),
 				$current_status === $status ? ' class="current"' : '',
-				sprintf( '%s <span class="count">(%d)</span>', esc_html( ucfirst( $status ) ), $count )
+				sprintf( '%s <span class="count">(%d)</span>', esc_html( self::status_label( $status ) ), $count )
 			);
 		}
 
 		return $views;
+	}
+
+	/**
+	 * Translated display label for a status value. Every status a row can
+	 * ever hold (including ones the webhook receiver and "Refresh status"
+	 * apply — delivered/opened/clicked/bounced/complained — not only the
+	 * four filter views above) goes through here, so nothing in the log's
+	 * Status column ever shows an untranslated raw enum value.
+	 *
+	 * @param string $status Raw status value.
+	 * @return string
+	 */
+	public static function status_label( $status ) {
+		$labels = array(
+			'sending'    => __( 'Sending', 'euromail' ),
+			'sent'       => __( 'Sent', 'euromail' ),
+			'queued'     => __( 'Queued', 'euromail' ),
+			'failed'     => __( 'Failed', 'euromail' ),
+			'delivered'  => __( 'Delivered', 'euromail' ),
+			'opened'     => __( 'Opened', 'euromail' ),
+			'clicked'    => __( 'Clicked', 'euromail' ),
+			'bounced'    => __( 'Bounced', 'euromail' ),
+			'complained' => __( 'Complained', 'euromail' ),
+		);
+
+		return isset( $labels[ $status ] ) ? $labels[ $status ] : ucfirst( $status );
 	}
 
 	/**
@@ -206,8 +232,10 @@ class Euromail_Log_Table extends WP_List_Table {
 			case 'backend':
 				return '' !== (string) $item['backend'] ? esc_html( $item['backend'] ) : '&#8212;';
 
-			case 'created_at':
 			case 'status':
+				return esc_html( self::status_label( $item['status'] ) );
+
+			case 'created_at':
 			case 'mail_to':
 			case 'attempts':
 				return esc_html( $item[ $column_name ] );

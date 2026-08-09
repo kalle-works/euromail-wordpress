@@ -38,6 +38,7 @@ class Euromail_Api_Backend {
 		// for the existing log column's display purpose, api_id so
 		// incoming webhook events can find this row at all.
 		return array(
+			// phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- the SDK's own SentEmail property name, not ours to rename.
 			'message_id' => isset( $sent->messageId ) ? $sent->messageId : null,
 			'api_id'     => isset( $sent->id ) ? $sent->id : null,
 		);
@@ -52,13 +53,13 @@ class Euromail_Api_Backend {
 	 */
 	private function build_params( array $email, $idempotency_key ) {
 		$params = array(
-			'from'             => $this->format_from( $email ),
-			'to'               => $email['to'],
-			'subject'          => $email['subject'],
-			'idempotency_key'  => $idempotency_key,
-			'transactional'    => (bool) Euromail_Settings::get( 'euromail_transactional_default' ),
-			'tracking'         => (bool) Euromail_Settings::get( 'euromail_tracking_default' ),
-			'metadata'         => array(
+			'from'            => $this->format_from( $email ),
+			'to'              => $email['to'],
+			'subject'         => $email['subject'],
+			'idempotency_key' => $idempotency_key,
+			'transactional'   => (bool) Euromail_Settings::get( 'euromail_transactional_default' ),
+			'tracking'        => (bool) Euromail_Settings::get( 'euromail_tracking_default' ),
+			'metadata'        => array(
 				'source' => 'wordpress',
 				'site'   => home_url(),
 			),

@@ -146,34 +146,34 @@ class Euromail_Admin {
 			return;
 		}
 
-		if ( isset( $_POST['euromail_settings_submit'] ) ) {
-			$this->save_settings();
+		if ( isset( $_POST['euromail_settings_submit'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$this->save_settings(); // Verifies euromail_settings_nonce itself before doing anything.
 		}
 
-		$api_key              = Euromail_Settings::get( 'euromail_api_key' );
-		$api_key_locked       = defined( 'EUROMAIL_API_KEY' ) && '' !== EUROMAIL_API_KEY;
-		$api_base_url         = Euromail_Settings::get( 'euromail_api_base_url' );
-		$api_base_url_locked  = defined( 'EUROMAIL_API_BASE_URL' ) && '' !== EUROMAIL_API_BASE_URL;
-		$force_from_enabled   = Euromail_Settings::get( 'euromail_force_from_enabled' );
-		$force_from_email     = Euromail_Settings::get( 'euromail_force_from_email' );
-		$force_from_name      = Euromail_Settings::get( 'euromail_force_from_name' );
-		$transactional        = Euromail_Settings::get( 'euromail_transactional_default' );
-		$tracking             = Euromail_Settings::get( 'euromail_tracking_default' );
-		$fallback_enabled     = Euromail_Settings::get( 'euromail_fallback_enabled' );
-		$log_retention_days   = Euromail_Settings::get( 'euromail_log_retention_days' );
-		$store_body           = Euromail_Settings::get( 'euromail_store_body' );
-		$delete_on_uninstall  = Euromail_Settings::get( 'euromail_delete_data_on_uninstall' );
-		$backend              = Euromail_Settings::get( 'euromail_backend' );
-		$smtp_host            = Euromail_Settings::get( 'euromail_smtp_host' );
-		$smtp_port            = Euromail_Settings::get( 'euromail_smtp_port' );
-		$smtp_encryption      = Euromail_Settings::get( 'euromail_smtp_encryption' );
-		$smtp_auth            = Euromail_Settings::get( 'euromail_smtp_auth' );
-		$smtp_username        = Euromail_Settings::get( 'euromail_smtp_username' );
-		$smtp_password        = Euromail_Settings::get( 'euromail_smtp_password' );
-		$smtp_password_locked = defined( 'EUROMAIL_SMTP_PASSWORD' ) && '' !== EUROMAIL_SMTP_PASSWORD;
-		$webhook_secret       = Euromail_Settings::get( 'euromail_webhook_secret' );
+		$api_key               = Euromail_Settings::get( 'euromail_api_key' );
+		$api_key_locked        = defined( 'EUROMAIL_API_KEY' ) && '' !== EUROMAIL_API_KEY;
+		$api_base_url          = Euromail_Settings::get( 'euromail_api_base_url' );
+		$api_base_url_locked   = defined( 'EUROMAIL_API_BASE_URL' ) && '' !== EUROMAIL_API_BASE_URL;
+		$force_from_enabled    = Euromail_Settings::get( 'euromail_force_from_enabled' );
+		$force_from_email      = Euromail_Settings::get( 'euromail_force_from_email' );
+		$force_from_name       = Euromail_Settings::get( 'euromail_force_from_name' );
+		$transactional         = Euromail_Settings::get( 'euromail_transactional_default' );
+		$tracking              = Euromail_Settings::get( 'euromail_tracking_default' );
+		$fallback_enabled      = Euromail_Settings::get( 'euromail_fallback_enabled' );
+		$log_retention_days    = Euromail_Settings::get( 'euromail_log_retention_days' );
+		$store_body            = Euromail_Settings::get( 'euromail_store_body' );
+		$delete_on_uninstall   = Euromail_Settings::get( 'euromail_delete_data_on_uninstall' );
+		$backend               = Euromail_Settings::get( 'euromail_backend' );
+		$smtp_host             = Euromail_Settings::get( 'euromail_smtp_host' );
+		$smtp_port             = Euromail_Settings::get( 'euromail_smtp_port' );
+		$smtp_encryption       = Euromail_Settings::get( 'euromail_smtp_encryption' );
+		$smtp_auth             = Euromail_Settings::get( 'euromail_smtp_auth' );
+		$smtp_username         = Euromail_Settings::get( 'euromail_smtp_username' );
+		$smtp_password         = Euromail_Settings::get( 'euromail_smtp_password' );
+		$smtp_password_locked  = defined( 'EUROMAIL_SMTP_PASSWORD' ) && '' !== EUROMAIL_SMTP_PASSWORD;
+		$webhook_secret        = Euromail_Settings::get( 'euromail_webhook_secret' );
 		$webhook_secret_locked = defined( 'EUROMAIL_WEBHOOK_SECRET' ) && '' !== EUROMAIL_WEBHOOK_SECRET;
-		$webhook_url          = rest_url( 'euromail/v1/webhook' );
+		$webhook_url           = rest_url( 'euromail/v1/webhook' );
 
 		?>
 		<div class="wrap">
@@ -578,8 +578,8 @@ class Euromail_Admin {
 
 		$result = null;
 
-		if ( isset( $_POST['euromail_send_test_submit'] ) ) {
-			$result = $this->send_test_email();
+		if ( isset( $_POST['euromail_send_test_submit'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$result = $this->send_test_email(); // Verifies euromail_send_test_nonce itself before doing anything.
 		}
 
 		$current_user = wp_get_current_user();
@@ -690,7 +690,7 @@ class Euromail_Admin {
 		global $wpdb;
 		$log_id = (int) $wpdb->get_var(
 			$wpdb->prepare(
-				'SELECT id FROM ' . Euromail_Logger::table_name() . ' WHERE mail_to LIKE %s ORDER BY id DESC LIMIT 1',
+				'SELECT id FROM ' . Euromail_Logger::table_name() . ' WHERE mail_to LIKE %s ORDER BY id DESC LIMIT 1', // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
 				'%' . $wpdb->esc_like( $to ) . '%'
 			)
 		);
@@ -721,7 +721,7 @@ class Euromail_Admin {
 	 * @return callable|null
 	 */
 	private function build_backend_override_filter() {
-		$choice = isset( $_POST['euromail_test_backend'] ) ? sanitize_text_field( wp_unslash( $_POST['euromail_test_backend'] ) ) : 'default';
+		$choice = isset( $_POST['euromail_test_backend'] ) ? sanitize_text_field( wp_unslash( $_POST['euromail_test_backend'] ) ) : 'default'; // phpcs:ignore WordPress.Security.NonceVerification.Missing -- called only from send_test_email(), which verifies the nonce first.
 
 		if ( 'api' === $choice && class_exists( 'Euromail_Api_Backend' ) ) {
 			return function () {
@@ -839,17 +839,17 @@ class Euromail_Admin {
 	 *
 	 * @param array    $domain  Raw domain array.
 	 * @param string[] $keys    Candidate key names, in priority order.
-	 * @param string   $default Fallback when none are present.
+	 * @param string   $fallback Value to use when none of $keys are present.
 	 * @return string
 	 */
-	private function domain_field( array $domain, array $keys, $default ) {
+	private function domain_field( array $domain, array $keys, $fallback ) {
 		foreach ( $keys as $key ) {
 			if ( isset( $domain[ $key ] ) && '' !== (string) $domain[ $key ] ) {
 				return (string) $domain[ $key ];
 			}
 		}
 
-		return $default;
+		return $fallback;
 	}
 
 	/**
@@ -884,7 +884,7 @@ class Euromail_Admin {
 		}
 
 		if ( isset( $_GET['action'], $_GET['id'] ) && in_array( sanitize_text_field( wp_unslash( $_GET['action'] ) ), array( 'view', 'refresh_status' ), true ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-			$this->render_log_detail_page( absint( $_GET['id'] ) );
+			$this->render_log_detail_page( absint( $_GET['id'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			return;
 		}
 
@@ -944,7 +944,7 @@ class Euromail_Admin {
 
 			<table class="form-table">
 				<tr><th scope="row"><?php esc_html_e( 'ID', 'euromail' ); ?></th><td><?php echo esc_html( $row['id'] ); ?></td></tr>
-				<tr><th scope="row"><?php esc_html_e( 'Status', 'euromail' ); ?></th><td><?php echo esc_html( $row['status'] ); ?></td></tr>
+				<tr><th scope="row"><?php esc_html_e( 'Status', 'euromail' ); ?></th><td><?php echo esc_html( Euromail_Log_Table::status_label( $row['status'] ) ); ?></td></tr>
 				<tr><th scope="row"><?php esc_html_e( 'Backend', 'euromail' ); ?></th><td><?php echo esc_html( '' !== (string) $row['backend'] ? $row['backend'] : '—' ); ?></td></tr>
 				<tr><th scope="row"><?php esc_html_e( 'Created', 'euromail' ); ?></th><td><?php echo esc_html( $row['created_at'] ); ?></td></tr>
 				<tr><th scope="row"><?php esc_html_e( 'Updated', 'euromail' ); ?></th><td><?php echo esc_html( $row['updated_at'] ); ?></td></tr>
@@ -1049,7 +1049,7 @@ class Euromail_Admin {
 		}
 
 		$action = sanitize_text_field( wp_unslash( $_GET['action'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		$id     = absint( $_GET['id'] );
+		$id     = absint( $_GET['id'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 
 		if ( 'refresh_status' === $action ) {
 			$this->maybe_handle_refresh_status( $id );
@@ -1221,6 +1221,7 @@ class Euromail_Admin {
 			'resent'                    => array( 'success', __( 'Email resent successfully.', 'euromail' ) ),
 			'resend_queued'             => array( 'success', __( 'Resend queued; it will retry automatically if it does not go out immediately.', 'euromail' ) ),
 			'resend_failed'             => array( 'error', __( 'Could not resend this email — it has no stored payload to resend.', 'euromail' ) ),
+			/* translators: %s: attachment filename */
 			'resend_missing_attachment' => array( 'error', __( 'Could not resend this email — attachment "%s" no longer exists and cannot be resent.', 'euromail' ) ),
 			'resend_not_allowed'        => array( 'error', __( 'Could not resend this email — it has already been delivered or is currently in progress.', 'euromail' ) ),
 			'refreshed'                 => array( 'success', __( 'Status refreshed from Euromail.', 'euromail' ) ),
