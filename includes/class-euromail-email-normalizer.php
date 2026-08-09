@@ -501,7 +501,9 @@ class Euromail_Email_Normalizer {
 
 			if ( false !== $finfo ) {
 				$detected = finfo_file( $finfo, $path );
-				finfo_close( $finfo );
+				// No finfo_close(): $finfo is released like any other
+				// variable once it goes out of scope; the explicit close
+				// call is deprecated as of newer PHP versions.
 
 				if ( is_string( $detected ) && '' !== $detected ) {
 					$content_type = $detected;
