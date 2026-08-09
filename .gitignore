@@ -10,3 +10,4 @@
 /.next-version
 /build/
 /*.zip
+/.wp-env-home/
