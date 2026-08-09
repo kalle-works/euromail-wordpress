@@ -33,6 +33,22 @@ jobs:
   test:
     name: PHPUnit
     runs-on: kalle-works-arm64
+    env:
+      # wp-env's default cache directory (~/.wp-env, the runner's HOME) is
+      # not visible to the Docker daemon that actually runs its containers
+      # on this runner — confirmed by direct inspection: the WordPress-develop
+      # PHPUnit library wp-env downloads there is genuinely present on the
+      # runner's own filesystem (a real git checkout, correctly sparse-checked
+      # out to the right tag) but appears completely empty from inside the
+      # container, which then fails to find WP_UnitTestCase et al. The
+      # plugin directory itself, mounted from inside $GITHUB_WORKSPACE, does
+      # NOT have this problem — the runner's job-workspace sharing with the
+      # Docker daemon covers that path specifically. Redirecting wp-env's
+      # whole cache directory into the workspace puts it under that same
+      # sharing mechanism. (Locally this env var is unset, so nothing about
+      # normal local development changes — wp-env just uses its own default
+      # ~/.wp-env, which works fine there since the daemon is native.)
+      WP_ENV_HOME: ${{ github.workspace }}/.wp-env-home
     steps:
       - name: Check Docker availability
         # wp-env needs a Docker daemon; the runner naming (kalle-works-arm64)
@@ -86,6 +102,9 @@ jobs:
     # Full browser + mock-service suite is slow to justify on every PR push;
     # runs once things have already merged to main.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      # Same reason as the test job's identical setting — see there.
+      WP_ENV_HOME: ${{ github.workspace }}/.wp-env-home
     steps:
       - name: Check Docker availability
         run: |
