@@ -45,6 +45,11 @@ jobs:
             exit 1
           fi
           echo "Docker is available: $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo 'version unknown')"
+          if ! docker compose version > /dev/null 2>&1; then
+            echo "::error::'docker compose version' failed — the Docker daemon is reachable, but the Compose v2 plugin isn't. wp-env (@wordpress/env ^11) requires 'docker compose', not the old standalone 'docker-compose' binary. Install the compose-plugin package on this runner (e.g. 'docker-compose-plugin' via apt, or the Docker Desktop/Colima setting that enables it) before this job can run."
+            exit 1
+          fi
+          echo "Docker Compose is available: $(docker compose version --short 2>/dev/null || echo 'version unknown')"
 
       - uses: actions/checkout@v4
 
@@ -89,6 +94,11 @@ jobs:
             exit 1
           fi
           echo "Docker is available: $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo 'version unknown')"
+          if ! docker compose version > /dev/null 2>&1; then
+            echo "::error::'docker compose version' failed — the Docker daemon is reachable, but the Compose v2 plugin isn't. wp-env (@wordpress/env ^11) requires 'docker compose', not the old standalone 'docker-compose' binary. Install the compose-plugin package on this runner (e.g. 'docker-compose-plugin' via apt, or the Docker Desktop/Colima setting that enables it) before this job can run."
+            exit 1
+          fi
+          echo "Docker Compose is available: $(docker compose version --short 2>/dev/null || echo 'version unknown')"
 
       - uses: actions/checkout@v4
 
