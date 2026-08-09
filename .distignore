@@ -24,5 +24,8 @@ CHANGELOG.md
 README.md
 test-results
 playwright-report
+build
+pkg
+*.zip
 *.log
 .DS_Store

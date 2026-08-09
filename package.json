@@ -7,7 +7,7 @@
     "stop": "wp-env stop",
     "clean": "wp-env clean",
     "destroy": "wp-env destroy",
-    "test:unit": "wp-env run tests-cli --env-cwd=wp-content/plugins/wordpress-sendmail phpunit",
+    "test:unit": "wp-env run tests-cli --env-cwd=wp-content/plugins/$(basename \"$PWD\") phpunit",
     "mock-api": "node e2e/mock-api/server.js",
     "test:e2e": "playwright test --config=e2e/playwright.config.ts"
   },

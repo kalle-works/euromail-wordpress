@@ -1,4 +1,3 @@
-<!-- TODO(release): "Contributors: kalle" below is an unverified placeholder — confirm the real wordpress.org username before submitting. -->
 === Euromail – SMTP & Email API ===
 Contributors: kalle
 Tags: smtp, email, transactional email, email log, email delivery

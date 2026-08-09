@@ -192,18 +192,44 @@ if ( "api" !== $row["backend"] ) {
 echo "Test send succeeded: log row #{$row["id"]} recorded status=sent, backend=api, mail_to=recipient@example.com.\n";
 ' --allow-root
 
-REQUEST_COUNT=$(docker run --rm --network "$NETWORK" node:20-alpine \
+# A dead/unreachable mock here must produce this script's own clear
+# diagnostic, not an unhandled Node exception or a bash "integer
+# expression expected" error from feeding garbage into [ -lt ] below —
+# both a request timeout and a connection error are caught explicitly.
+if ! REQUEST_COUNT=$(docker run --rm --network "$NETWORK" node:20-alpine \
 	node -e "
-		http = require('http');
-		http.get('http://${MOCK_CONTAINER}:8825/_requests', (res) => {
+		const http = require('http');
+		const req = http.get('http://${MOCK_CONTAINER}:8825/_requests', (res) => {
 			let body = '';
-			res.on('data', (chunk) => body += chunk);
+			res.on('data', (chunk) => { body += chunk; });
 			res.on('end', () => {
-				const data = JSON.parse(body);
-				console.log(data.requests.length);
+				try {
+					const data = JSON.parse(body);
+					console.log(data.requests.length);
+				} catch (e) {
+					console.error('Could not parse the mock API response: ' + e.message);
+					process.exit(1);
+				}
 			});
 		});
-	")
+		req.setTimeout(10000, () => {
+			console.error('Timed out waiting for the mock API to respond to GET /_requests.');
+			req.destroy();
+			process.exit(1);
+		});
+		req.on('error', (e) => {
+			console.error('Could not reach the mock API: ' + e.message);
+			process.exit(1);
+		});
+	"); then
+	echo "Failed to fetch the request count from the mock API — it may be dead, unreachable, or timed out. See the Node error above." >&2
+	exit 1
+fi
+
+if ! [[ "$REQUEST_COUNT" =~ ^[0-9]+$ ]]; then
+	echo "Got a non-numeric response when checking the mock API's request count: '${REQUEST_COUNT}'" >&2
+	exit 1
+fi
 
 if [ "$REQUEST_COUNT" -lt 1 ]; then
 	echo "The mock API never actually received a POST /v1/emails request." >&2

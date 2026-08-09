@@ -8,9 +8,10 @@ import { execSync } from 'child_process';
  * Captures the four wordpress.org listing screenshots into .wordpress-org/,
  * deployed as SVN assets by release.yml (ASSETS_DIR). Not part of the test
  * suite — deliberately named so it doesn't match playwright.config.ts's
- * `*.spec.ts` testMatch glob; run explicitly:
+ * `*.spec.ts` testMatch glob, which is also why running it needs its own
+ * config rather than the normal one:
  *
- *   npx playwright test e2e/screenshots.capture.ts --config=e2e/playwright.config.ts
+ *   npx playwright test --config=e2e/playwright.screenshots.config.ts
  */
 
 const MOCK_API_URL = 'http://localhost:8825';

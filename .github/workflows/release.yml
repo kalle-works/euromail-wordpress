@@ -1,7 +1,13 @@
 name: Release
 
 on:
-  push:
+  # Gated on CI passing on main, not merely landing there — no release
+  # (and therefore no wordpress.org deploy) of a commit CI hasn't actually
+  # gone green on. workflow_dispatch remains as a manual break-glass
+  # trigger for when that's genuinely necessary.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -13,6 +19,7 @@ jobs:
   release:
     name: Semantic Release
     runs-on: kalle-works-arm64
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     permissions:
       contents: write
       issues: write
@@ -23,6 +30,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # workflow_run doesn't check out the triggering commit by
+          # default (it defaults to the workflow FILE's own ref); pin
+          # explicitly to the exact commit CI just passed on. For the
+          # workflow_dispatch fallback there's no such SHA, so fall back
+          # to normal ref resolution (whatever the dispatch was run
+          # against, ordinarily main).
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -56,6 +70,20 @@ jobs:
       SLUG: euromail
       VERSION: ${{ needs.release.outputs.version }}
     steps:
+      - name: Check required tools are on the runner
+        run: |
+          missing=""
+          for tool in gh zip rsync docker; do
+            if ! command -v "$tool" > /dev/null 2>&1; then
+              missing="${missing} ${tool}"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required tool(s) on this runner:${missing}. This job needs all of gh, zip, rsync, and docker to build, verify, and publish a release."
+            exit 1
+          fi
+          echo "All required tools present: gh, zip, rsync, docker."
+
       - name: Check Docker availability
         # bin/verify-zip-install.sh needs a Docker daemon; the runner naming
         # (kalle-works-arm64) suggests these may be Kubernetes-hosted, where
@@ -70,9 +98,10 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          # The release job just pushed a version-bump commit and tag to
-          # main; check that out, not whatever ref triggered this workflow.
-          ref: main
+          # Check out the exact tag semantic-release just created, never
+          # main's current tip — main could have moved again between the
+          # release job finishing and this job starting.
+          ref: v${{ needs.release.outputs.version }}
           fetch-depth: 0
 
       - uses: shivammathur/setup-php@v2

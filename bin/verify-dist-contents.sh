@@ -38,6 +38,14 @@ must_be_absent "package-lock.json"
 must_be_absent "phpunit.xml"
 must_be_absent "phpcs.xml.dist"
 must_be_absent "bin"
+must_be_absent ".wordpress-org"
+# A leftover build/ or pkg/ directory from a previous local run, left in
+# the checkout that gets rsynced, would otherwise get copied into the new
+# build/ verbatim (rsync --exclude-from=.distignore only excludes what's
+# listed there) — a nested build/build/ (or a stale zip) shipped inside
+# the plugin itself.
+must_be_absent "build"
+must_be_absent "pkg"
 
 must_be_present "vendor/autoload.php"
 must_be_present "vendor/euromail/euromail-php"
