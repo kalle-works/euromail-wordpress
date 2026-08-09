@@ -18,10 +18,19 @@
         }
     },
     "scripts": {
+        "lint": "phpcs",
         "phpcs": "phpcs",
         "phpcbf": "phpcbf"
     },
+    "_todo_packagist": "euromail/euromail-php is not yet registered on Packagist (pending manual submission). Once it is, drop the 'repositories' entries below and require \"^1.0\" directly — every consumer of this package currently has to carry that vcs repository entry themselves, which a Packagist registration removes the need for.",
     "repositories": [
+        {
+            "type": "path",
+            "url": "../euromail-php",
+            "options": {
+                "symlink": false
+            }
+        },
         {
             "type": "vcs",
             "url": "https://github.com/kalle-works/euromail-php"
