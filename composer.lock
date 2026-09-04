@@ -4,15 +4,21 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "4a349a8c7beda3b363f3836adf6cba68",
+    "content-hash": "c5b506078c48cb3d0be0ed8a7e844654",
     "packages": [
         {
             "name": "euromail/euromail",
-            "version": "dev-main",
+            "version": "v1.1.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/kalle-works/euromail-php.git",
+                "reference": "9587902a7ba3311d96c81facdadbb584e9a84640"
+            },
             "dist": {
-                "type": "path",
-                "url": "../euromail-php",
-                "reference": "a26e2b626f64ccc851b1ac0a589be10ccdc4d8a1"
+                "type": "zip",
+                "url": "https://api.github.com/repos/kalle-works/euromail-php/zipball/9587902a7ba3311d96c81facdadbb584e9a84640",
+                "reference": "9587902a7ba3311d96c81facdadbb584e9a84640",
+                "shasum": ""
             },
             "require": {
                 "ext-json": "*",
@@ -27,19 +33,16 @@
                     "EuroMail\\": "src/"
                 }
             },
-            "autoload-dev": {
-                "psr-4": {
-                    "EuroMail\\Tests\\": "tests/"
-                }
-            },
+            "notification-url": "https://packagist.org/downloads/",
             "license": [
                 "MIT"
             ],
             "description": "Official PHP SDK for the euromail.dev transactional email API",
-            "transport-options": {
-                "symlink": false,
-                "relative": true
-            }
+            "support": {
+                "issues": "https://github.com/kalle-works/euromail-php/issues",
+                "source": "https://github.com/kalle-works/euromail-php/tree/v1.1.1"
+            },
+            "time": "2026-09-04T13:44:24+00:00"
         }
     ],
     "packages-dev": [
@@ -2305,9 +2308,7 @@
     ],
     "aliases": [],
     "minimum-stability": "dev",
-    "stability-flags": {
-        "euromail/euromail": 20
-    },
+    "stability-flags": {},
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
