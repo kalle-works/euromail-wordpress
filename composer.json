@@ -5,7 +5,7 @@
     "license": "GPL-2.0-or-later",
     "require": {
         "php": ">=7.4",
-        "euromail/euromail-php": "@dev|^1.0"
+        "euromail/euromail": "@dev|^1.0"
     },
     "require-dev": {
         "yoast/phpunit-polyfills": "^1.1",

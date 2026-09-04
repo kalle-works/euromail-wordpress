@@ -4,21 +4,15 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "bf4fd536319c4b56ff298383a52444ec",
+    "content-hash": "4a349a8c7beda3b363f3836adf6cba68",
     "packages": [
         {
-            "name": "euromail/euromail-php",
-            "version": "v1.0.0",
-            "source": {
-                "type": "git",
-                "url": "https://github.com/kalle-works/euromail-php.git",
-                "reference": "fea8ad6bacf0808bfc533518d11a9532a4a013b5"
-            },
+            "name": "euromail/euromail",
+            "version": "dev-main",
             "dist": {
-                "type": "zip",
-                "url": "https://api.github.com/repos/kalle-works/euromail-php/zipball/fea8ad6bacf0808bfc533518d11a9532a4a013b5",
-                "reference": "fea8ad6bacf0808bfc533518d11a9532a4a013b5",
-                "shasum": ""
+                "type": "path",
+                "url": "../euromail-php",
+                "reference": "a26e2b626f64ccc851b1ac0a589be10ccdc4d8a1"
             },
             "require": {
                 "ext-json": "*",
@@ -42,11 +36,10 @@
                 "MIT"
             ],
             "description": "Official PHP SDK for the euromail.dev transactional email API",
-            "support": {
-                "source": "https://github.com/kalle-works/euromail-php/tree/v1.0.0",
-                "issues": "https://github.com/kalle-works/euromail-php/issues"
-            },
-            "time": "2026-08-08T20:45:04+00:00"
+            "transport-options": {
+                "symlink": false,
+                "relative": true
+            }
         }
     ],
     "packages-dev": [
@@ -2313,7 +2306,7 @@
     "aliases": [],
     "minimum-stability": "dev",
     "stability-flags": {
-        "euromail/euromail-php": 20
+        "euromail/euromail": 20
     },
     "prefer-stable": true,
     "prefer-lowest": false,
